@@ -166,20 +166,61 @@ async function fetchSavedBooks() {
   const selector = document.getElementById('book-selector');
   selector.innerHTML = '<option value="">-- Select Saved Book --</option>';
 
-  const targetPath = currentFolder === "All" ? "" : currentFolder;
-  const { data: items } = await supabaseClient.storage.from('pdf-files').list(`${currentUserId}/${targetPath}`);
+  let filesToDisplay = [];
 
-  if (items) {
-    for (const item of items) {
-      if (item.name.endsWith('.pdf')) {
-        const fullPath = targetPath ? `${currentUserId}/${targetPath}/${item.name}` : `${currentUserId}/${item.name}`;
-        const opt = document.createElement('option');
-        opt.value = fullPath;
-        opt.textContent = item.name;
-        selector.appendChild(opt);
+  if (currentFolder === "All") {
+    const { data: rootItems } = await supabaseClient.storage
+      .from('pdf-files')
+      .list(currentUserId);
+
+    if (rootItems) {
+      for (const item of rootItems) {
+        if (item.name.endsWith('.pdf')) {
+          filesToDisplay.push({
+            path: `${currentUserId}/${item.name}`,
+            name: item.name
+          });
+        } else {
+          const { data: subItems } = await supabaseClient.storage
+            .from('pdf-files')
+            .list(`${currentUserId}/${item.name}`);
+
+          if (subItems) {
+            subItems.forEach(subItem => {
+              if (subItem.name.endsWith('.pdf')) {
+                filesToDisplay.push({
+                  path: `${currentUserId}/${item.name}/${subItem.name}`,
+                  name: subItem.name
+                });
+              }
+            });
+          }
+        }
       }
     }
+  } else {
+    const { data: items } = await supabaseClient.storage
+      .from('pdf-files')
+      .list(`${currentUserId}/${currentFolder}`);
+
+    if (items) {
+      items.forEach(item => {
+        if (item.name.endsWith('.pdf')) {
+          filesToDisplay.push({
+            path: `${currentUserId}/${currentFolder}/${item.name}`,
+            name: item.name
+          });
+        }
+      });
+    }
   }
+
+  filesToDisplay.forEach(file => {
+    const opt = document.createElement('option');
+    opt.value = file.path;
+    opt.textContent = file.name;
+    selector.appendChild(opt);
+  });
 }
 
 async function loadPDFFromStorage(filePath) {
@@ -251,7 +292,6 @@ async function deleteCurrentPDF() {
   const selector = document.getElementById('book-selector');
   const deletedPath = currentFilePath;
 
-  // 1. Remove from Supabase Storage
   const { error } = await supabaseClient.storage
     .from('pdf-files')
     .remove([deletedPath]);
@@ -261,17 +301,14 @@ async function deleteCurrentPDF() {
     return;
   }
 
-  // 2. Clear Database entries
   await supabaseClient.from('annotations').delete().eq('book_id', currentBookId);
   await supabaseClient.from('progress').delete().eq('book_id', currentBookId);
 
-  // 3. Immediately remove option from HTML dropdown DOM
   const optionToRemove = selector.querySelector(`option[value="${CSS.escape(deletedPath)}"]`);
   if (optionToRemove) {
     optionToRemove.remove();
   }
 
-  // 4. Reset Viewer & Canvas State
   pdfDoc = null;
   currentFilePath = "";
   currentBookId = "";
@@ -285,7 +322,6 @@ async function deleteCurrentPDF() {
   document.getElementById('page-num').textContent = '0';
   document.getElementById('page-count').textContent = '0';
 
-  // 5. Re-fetch storage list
   await fetchSavedBooks();
 
   alert("Book deleted permanently.");
