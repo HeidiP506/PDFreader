@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Supabase PDF Reader</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+  <div id="controls">
+    <input type="file" id="pdf-upload" accept="application/pdf" />
+    <button id="prev">Previous</button>
+    <span>Page: <span id="page-num">1</span> / <span id="page-count">--</span></span>
+    <button id="next">Next</button>
+  </div>
+
+  <canvas id="pdf-canvas"></canvas>
+
+  <script>
+    // Initialize Supabase Client
+    const SUPABASE_URL = "YOUR_SUPABASE_URL";
+    const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    let pdfDoc = null;
+    let pageNum = 1;
+    let currentBookId = "";
+    const currentUserId = "demo-user";
+
+    // Upload PDF to Supabase Storage and Render
+    document.getElementById('pdf-upload').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      currentBookId = file.name.replace(/[^a-zA-Z0-9]/g, "_");
+
+      // 1. Upload to Supabase Storage Bucket
+      const { data, error } = await supabase.storage
+        .from('pdf-files')
+        .upload(`${currentUserId}/${currentBookId}.pdf`, file, { upsert: true });
+
+      // 2. Read File locally for immediate render
+      const arrayBuffer = await file.arrayBuffer();
+      pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
+      document.getElementById('page-count').textContent = pdfDoc.numPages;
+
+      // 3. Check for saved reading progress
+      const { data: progress } = await supabase
+        .from('progress')
+        .select('last_viewed_page')
+        .eq('user_id', currentUserId)
+        .eq('book_id', currentBookId)
+        .single();
+
+      pageNum = progress ? progress.last_viewed_page : 1;
+      renderPage(pageNum);
+    });
+
+    async function renderPage(num) {
+      const page = await pdfDoc.getPage(num);
+      const canvas = document.getElementById('pdf-canvas');
+      const ctx = canvas.getContext('2d');
+      const viewport = page.getViewport({ scale: 1.5 });
+
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      document.getElementById('page-num').textContent = num;
+
+      // Save page progress back to Supabase
+      if (currentBookId) {
+        await supabase
+          .from('progress')
+          .upsert({ 
+            user_id: currentUserId, 
+            book_id: currentBookId, 
+            last_viewed_page: num 
+          }, { onConflict: 'user_id,book_id' });
+      }
+    }
+
+    document.getElementById('prev').addEventListener('click', () => {
+      if (pageNum <= 1) return;
+      pageNum--;
+      renderPage(pageNum);
+    });
+
+    document.getElementById('next').addEventListener('click', () => {
+      if (pageNum >= pdfDoc.numPages) return;
+      pageNum++;
+      renderPage(pageNum);
+    });
+  </script>
+</body>
+</html>
