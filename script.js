@@ -108,7 +108,6 @@ async function fetchSavedBooks() {
 // --- PDF RENDERING & STATE CLEARING ---
 
 async function loadPDFFromStorage(filePath) {
-  // Clear prior canvas & overlays when switching books
   clearOverlayLayers();
   
   const pathParts = filePath.split('/');
@@ -207,7 +206,7 @@ document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
   };
   const type = document.getElementById('mode').value;
 
-  await supabaseClient.from('annotations').insert({
+  const { error } = await supabaseClient.from('annotations').insert({
     book_id: currentBookId,
     user_id: currentUserId,
     page_number: pageNum,
@@ -215,6 +214,10 @@ document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
     rects: annotation,
     comment_text: userComment
   });
+
+  if (error) {
+    console.error("Error inserting annotation:", error);
+  }
 
   selection.removeAllRanges();
   loadAnnotations(pageNum);
@@ -226,11 +229,16 @@ async function loadAnnotations(num) {
   layer.innerHTML = '';
   list.innerHTML = '';
 
-  const { data: items } = await supabaseClient
+  const { data: items, error } = await supabaseClient
     .from('annotations')
     .select('*')
     .eq('book_id', currentBookId)
     .eq('page_number', num);
+
+  if (error) {
+    console.error("Error loading annotations:", error);
+    return;
+  }
 
   if (!items || items.length === 0) {
     list.innerHTML = 'No annotations on this page.';
@@ -238,21 +246,35 @@ async function loadAnnotations(num) {
   }
 
   items.forEach(item => {
-    // Render visual overlay
     drawAnnotationBox(item.rects, item.annotation_type, item.comment_text);
 
-    // Render sidebar controls
     const card = document.createElement('div');
     card.className = 'annotation-card';
     card.innerHTML = `
       <p><strong>Type:</strong> ${item.annotation_type}</p>
       <p><strong>Note:</strong> ${item.comment_text || '<em>No comment</em>'}</p>
       <div class="actions">
-        <button onclick="editAnnotation(${item.id}, '${item.comment_text || ''}')">Edit Note</button>
-        <button class="danger" onclick="deleteAnnotation(${item.id})">Delete</button>
+        <button class="edit-btn" data-id="${item.id}" data-text="${item.comment_text || ''}">Edit Note</button>
+        <button class="danger delete-btn" data-id="${item.id}">Delete</button>
       </div>
     `;
     list.appendChild(card);
+  });
+
+  // Attach event listeners dynamically to fix scoping issues
+  document.querySelectorAll('.edit-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const id = e.target.getAttribute('data-id');
+      const text = e.target.getAttribute('data-text');
+      editAnnotation(id, text);
+    });
+  });
+
+  document.querySelectorAll('.delete-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const id = e.target.getAttribute('data-id');
+      deleteAnnotation(id);
+    });
   });
 }
 
