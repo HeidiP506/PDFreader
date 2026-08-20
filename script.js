@@ -28,15 +28,15 @@ let touchEndX = 0;
 init();
 
 async function init() {
-  removeRedundantToolbar();
+  removeRedundantToolbarDOM();
   setupStickySideToolbar();
   setupKeyboardAndSwipe();
   setupFileExplorerUI();
   await loadFileExplorer(currentFolderPath);
 }
 
-// Remove the old toolbar bar completely if it exists in DOM
-function removeRedundantToolbar() {
+// Fallback cleanup if the element exists in HTML
+function removeRedundantToolbarDOM() {
   const oldControls = document.querySelector('.reader-controls');
   if (oldControls) {
     oldControls.remove();
@@ -80,7 +80,7 @@ function setupStickySideToolbar() {
         </button>
       </div>
 
-      <div style="display: flex; align-items: center; justify-content: space-between; background: #f8fafc; padding: 8px 10px; border-radius: 6px; border: 1px solid #f1f5f9; margin-bottom: 12px;">
+      <div style="display: flex; align-items: center; justify-space: between; background: #f8fafc; padding: 8px 10px; border-radius: 6px; border: 1px solid #f1f5f9; margin-bottom: 12px;">
         <span style="font-size: 12px; font-weight: 500; color: #475569;">Active Color:</span>
         <input type="color" id="sticky-color-picker" value="#ffeb3b" style="border: none; width: 28px; height: 28px; cursor: pointer; background: none; border-radius: 50%;">
       </div>
@@ -106,7 +106,7 @@ function setupStickySideToolbar() {
     </div>
   `;
 
-  // Bind Switcher & Action Buttons
+  // Bind Buttons
   const highlightBtn = document.getElementById('tool-btn-highlight');
   const underlineBtn = document.getElementById('tool-btn-underline');
   const colorPicker = document.getElementById('sticky-color-picker');
@@ -171,7 +171,6 @@ async function loadFileExplorer(folderSubPath = "") {
     return;
   }
 
-  // Directory header featuring both + New Folder AND Upload PDF inline
   let html = `
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
       <div style="font-weight:600; font-size:14px; color:#334155;">
@@ -227,7 +226,6 @@ async function loadFileExplorer(folderSubPath = "") {
   html += `</div>`;
   explorerContainer.innerHTML = html;
 
-  // Bind Explorer Card Clicks
   document.querySelectorAll('.explorer-card[data-is-pdf]').forEach(card => {
     card.addEventListener('click', () => {
       const isPDF = card.getAttribute('data-is-pdf') === 'true';
@@ -243,7 +241,6 @@ async function loadFileExplorer(folderSubPath = "") {
     });
   });
 
-  // Bind New Folder Prompt Action
   document.getElementById('explorer-new-folder-btn')?.addEventListener('click', async () => {
     const name = prompt("Enter new folder name:");
     if (name) {
@@ -252,7 +249,6 @@ async function loadFileExplorer(folderSubPath = "") {
     }
   });
 
-  // Bind File Upload Action
   document.getElementById('explorer-upload-input')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
