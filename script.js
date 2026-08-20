@@ -40,7 +40,6 @@ document.getElementById('pdf-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  // Sanitize name for storage and book ID
   const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   currentBookId = cleanFileName.replace('.pdf', '');
 
@@ -111,7 +110,6 @@ async function loadPDFFromStorage(filePath) {
   const pathParts = filePath.split('/');
   const rawFileName = pathParts[pathParts.length - 1];
   
-  // Consistently derive book_id across upload and dropdown load
   currentBookId = rawFileName.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9._-]/g, "_");
 
   const { data: publicUrlData } = supabaseClient.storage
@@ -168,6 +166,7 @@ async function renderPage(num) {
   const textLayerDiv = document.getElementById('text-layer');
   textLayerDiv.style.width = `${viewport.width}px`;
   textLayerDiv.style.height = `${viewport.height}px`;
+  textLayerDiv.style.setProperty('--scale-factor', viewport.scale);
 
   const textContent = await page.getTextContent();
   pdfjsLib.renderTextLayer({
