@@ -1,0 +1,55 @@
+/* Warm Paper Aesthetic */
+body {
+  background-color: #f4ecd8;
+  color: #2b2b2b;
+  font-family: 'Georgia', 'Times New Roman', serif;
+  margin: 0;
+  padding: 20px;
+}
+
+#pdf-wrapper {
+  position: relative;
+  display: inline-block;
+  background: #fdfbf7;
+  border-radius: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15), 0 0 1px rgba(0, 0, 0, 0.2);
+  margin: 20px auto;
+  user-select: text;
+  --scale-factor: 1.5;
+}
+
+/* Page Control Bar */
+.reader-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  background: #eadecc;
+  padding: 10px 20px;
+  border-radius: 8px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+  margin-bottom: 15px;
+}
+
+button {
+  background: #7a5c43;
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.2s ease;
+}
+
+button:hover {
+  background: #5c4330;
+}
+
+button.danger {
+  background: #a93226;
+}
+
+button.danger:hover {
+  background: #7b241c;
+}
