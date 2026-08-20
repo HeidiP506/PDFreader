@@ -40,9 +40,12 @@ document.getElementById('pdf-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  currentBookId = file.name.replace(/[^a-zA-Z0-9]/g, "_");
+  // Sanitize name for storage and book ID
+  const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  currentBookId = cleanFileName.replace('.pdf', '');
+
   const folderPath = currentFolder === "All" ? "Uncategorized" : currentFolder;
-  const storagePath = `${currentUserId}/${folderPath}/${currentBookId}.pdf`;
+  const storagePath = `${currentUserId}/${folderPath}/${cleanFileName}`;
 
   const { error } = await supabaseClient.storage
     .from('pdf-files')
@@ -106,7 +109,10 @@ async function loadPDFFromStorage(filePath) {
   clearOverlayLayers();
   
   const pathParts = filePath.split('/');
-  currentBookId = pathParts[pathParts.length - 1].replace('.pdf', '');
+  const rawFileName = pathParts[pathParts.length - 1];
+  
+  // Consistently derive book_id across upload and dropdown load
+  currentBookId = rawFileName.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9._-]/g, "_");
 
   const { data: publicUrlData } = supabaseClient.storage
     .from('pdf-files')
@@ -114,7 +120,7 @@ async function loadPDFFromStorage(filePath) {
 
   try {
     const response = await fetch(publicUrlData.publicUrl);
-    if (!response.ok) throw new Error("Could not fetch file");
+    if (!response.ok) throw new Error("Could not fetch file from storage");
 
     const arrayBuffer = await response.arrayBuffer();
     pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
@@ -125,13 +131,13 @@ async function loadPDFFromStorage(filePath) {
       .select('last_viewed_page')
       .eq('user_id', currentUserId)
       .eq('book_id', currentBookId)
-      .single();
+      .maybeSingle();
 
     pageNum = progress ? progress.last_viewed_page : 1;
     renderPage(pageNum);
   } catch (err) {
     console.error("Download Error:", err);
-    alert("Error loading PDF from storage.");
+    alert("Error loading PDF from storage: " + err.message);
   }
 }
 
@@ -184,11 +190,13 @@ async function renderPage(num) {
 
 document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
   const selection = window.getSelection();
-  if (!selection || selection.isCollapsed) return;
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) return;
 
   const range = selection.getRangeAt(0);
   const rect = range.getBoundingClientRect();
   const wrapperRect = document.getElementById('pdf-wrapper').getBoundingClientRect();
+
+  if (rect.width === 0 || rect.height === 0) return;
 
   const userComment = prompt("Add a comment/note for this text (optional):") || "";
   const annotation = {
@@ -199,17 +207,22 @@ document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
   };
   const type = document.getElementById('mode').value;
 
+  console.log("Saving annotation for book_id:", currentBookId);
+
   const { error } = await supabaseClient.from('annotations').insert({
     book_id: currentBookId,
     user_id: currentUserId,
     page_number: pageNum,
     annotation_type: type,
     rects: annotation,
-    comment_text: userComment
+    comment_text: userComment,
+    created_at: new Date().toISOString()
   });
 
   if (error) {
     console.error("Error inserting annotation:", error);
+    alert("Save failed: " + error.message);
+    return;
   }
 
   selection.removeAllRanges();
