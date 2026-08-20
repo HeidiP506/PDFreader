@@ -10,6 +10,11 @@ let currentBookId = "";
 let currentFolder = "All";
 const currentUserId = "demo-user";
 
+// Drag-to-Draw state tracking
+let isDragging = false;
+let startX = 0;
+let startY = 0;
+
 init();
 
 async function init() {
@@ -166,15 +171,23 @@ async function renderPage(num) {
   const textLayerDiv = document.getElementById('text-layer');
   textLayerDiv.style.width = `${viewport.width}px`;
   textLayerDiv.style.height = `${viewport.height}px`;
+
   textLayerDiv.style.setProperty('--scale-factor', viewport.scale);
+  wrapper.style.setProperty('--scale-factor', viewport.scale);
 
   const textContent = await page.getTextContent();
-  pdfjsLib.renderTextLayer({
-    textContentSource: textContent,
-    container: textLayerDiv,
-    viewport: viewport,
-    textDivs: []
-  });
+  
+  // Render text layer
+  try {
+    pdfjsLib.renderTextLayer({
+      textContentSource: textContent,
+      container: textLayerDiv,
+      viewport: viewport,
+      textDivs: []
+    });
+  } catch (e) {
+    console.log("Text layer legacy fallback triggered");
+  }
 
   if (currentBookId) {
     await supabaseClient.from('progress').upsert({
@@ -187,45 +200,81 @@ async function renderPage(num) {
   loadAnnotations(num);
 }
 
-document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
+// --- HYBRID ANNOTATION HANDLER (TEXT SELECTION OR DRAWING) ---
+
+const wrapper = document.getElementById('pdf-wrapper');
+
+wrapper.addEventListener('mousedown', (e) => {
+  // Only register draw drag if clicking on wrapper or text layer directly
+  if (e.target.id === 'pdf-canvas' || e.target.classList.contains('textLayer') || e.target.id === 'annotation-layer') {
+    isDragging = true;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    startX = e.clientX - wrapperRect.left;
+    startY = e.clientY - wrapperRect.top;
+  }
+});
+
+wrapper.addEventListener('mouseup', async (e) => {
   const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || !selection.toString().trim()) return;
+  const wrapperRect = wrapper.getBoundingClientRect();
+  let rect = null;
 
-  const range = selection.getRangeAt(0);
-  const rect = range.getBoundingClientRect();
-  const wrapperRect = document.getElementById('pdf-wrapper').getBoundingClientRect();
+  // 1. Try standard text selection first
+  if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
+    const range = selection.getRangeAt(0);
+    const clientRect = range.getBoundingClientRect();
+    rect = {
+      x: clientRect.left - wrapperRect.left,
+      y: clientRect.top - wrapperRect.top,
+      w: clientRect.width,
+      h: clientRect.height
+    };
+    selection.removeAllRanges();
+  } 
+  // 2. Fall back to drag-drawing if no text selection was detected
+  else if (isDragging) {
+    const endX = e.clientX - wrapperRect.left;
+    const endY = e.clientY - wrapperRect.top;
 
-  if (rect.width === 0 || rect.height === 0) return;
+    const width = Math.abs(endX - startX);
+    const height = Math.abs(endY - startY);
 
-  const userComment = prompt("Add a comment/note for this text (optional):") || "";
-  const annotation = {
-    x: rect.left - wrapperRect.left,
-    y: rect.top - wrapperRect.top,
-    w: rect.width,
-    h: rect.height
-  };
-  const type = document.getElementById('mode').value;
-
-  console.log("Saving annotation for book_id:", currentBookId);
-
-  const { error } = await supabaseClient.from('annotations').insert({
-    book_id: currentBookId,
-    user_id: currentUserId,
-    page_number: pageNum,
-    annotation_type: type,
-    rects: annotation,
-    comment_text: userComment,
-    created_at: new Date().toISOString()
-  });
-
-  if (error) {
-    console.error("Error inserting annotation:", error);
-    alert("Save failed: " + error.message);
-    return;
+    // Only create annotation if drag distance is greater than 8px (prevents accidental clicks)
+    if (width > 8 || height > 8) {
+      rect = {
+        x: Math.min(startX, endX),
+        y: Math.min(startY, endY),
+        w: width,
+        h: height > 8 ? height : 15 // Ensure minimum height for underlines/lines
+      };
+    }
   }
 
-  selection.removeAllRanges();
-  loadAnnotations(pageNum);
+  isDragging = false;
+
+  // If we got valid coordinates from either method, save to Supabase
+  if (rect && rect.w > 0) {
+    const userComment = prompt("Add a comment/note for this annotation (optional):") || "";
+    const type = document.getElementById('mode').value;
+
+    const { error } = await supabaseClient.from('annotations').insert({
+      book_id: currentBookId,
+      user_id: currentUserId,
+      page_number: pageNum,
+      annotation_type: type,
+      rects: rect,
+      comment_text: userComment,
+      created_at: new Date().toISOString()
+    });
+
+    if (error) {
+      console.error("Error inserting annotation:", error);
+      alert("Save failed: " + error.message);
+      return;
+    }
+
+    loadAnnotations(pageNum);
+  }
 });
 
 async function loadAnnotations(num) {
