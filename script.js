@@ -32,7 +32,6 @@ async function init() {
 function setupExtraUIControls() {
   const controlsDiv = document.querySelector('.reader-controls') || document.body;
 
-  // Add Move & Delete buttons if missing
   if (!document.getElementById('move-book-btn')) {
     const moveBtn = document.createElement('button');
     moveBtn.id = 'move-book-btn';
@@ -51,10 +50,8 @@ function setupExtraUIControls() {
   }
 }
 
-// Keyboard (Arrow Keys) & Touch (Swipe) Event Listeners
 function setupKeyboardAndSwipe() {
   document.addEventListener('keydown', (e) => {
-    // Prevent accidental page flip when typing in a prompt or input field
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
 
     if (e.key === 'ArrowLeft') {
@@ -77,7 +74,7 @@ function setupKeyboardAndSwipe() {
 }
 
 function handleSwipe() {
-  const swipeThreshold = 50; // Minimum distance to trigger swipe action
+  const swipeThreshold = 50;
   if (touchEndX < touchStartX - swipeThreshold) {
     goToNextPage();
   }
@@ -98,7 +95,6 @@ function goToNextPage() {
   renderPage(pageNum);
 }
 
-// Folder & Upload Handlers
 document.getElementById('new-folder-btn').addEventListener('click', () => {
   const name = prompt("Enter new folder name:");
   if (name) {
@@ -222,7 +218,6 @@ async function loadPDFFromStorage(filePath) {
   }
 }
 
-// Move and Delete PDF Operations
 async function moveCurrentPDF() {
   if (!currentFilePath) return alert("Select a PDF first.");
 
@@ -262,11 +257,9 @@ async function deleteCurrentPDF() {
     return;
   }
 
-  // Clear annotations and progress records
   await supabaseClient.from('annotations').delete().eq('book_id', currentBookId);
   await supabaseClient.from('progress').delete().eq('book_id', currentBookId);
 
-  alert("PDF deleted.");
   pdfDoc = null;
   currentFilePath = "";
   currentBookId = "";
@@ -275,8 +268,14 @@ async function deleteCurrentPDF() {
   const canvas = document.getElementById('pdf-canvas');
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  
+
+  document.getElementById('page-num').textContent = '0';
+  document.getElementById('page-count').textContent = '0';
+
   await fetchSavedBooks();
+  document.getElementById('book-selector').value = "";
+
+  alert("Book deleted successfully.");
 }
 
 function clearOverlayLayers() {
@@ -334,7 +333,6 @@ async function renderPage(num) {
   loadAnnotations(num);
 }
 
-// Annotation Drag & Selection Handler
 const wrapper = document.getElementById('pdf-wrapper');
 
 wrapper.addEventListener('mousedown', (e) => {
