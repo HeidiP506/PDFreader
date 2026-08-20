@@ -1,4 +1,3 @@
-// Supabase Credentials
 const SUPABASE_URL = "https://tqxcuvpxzpgwrfqobnur.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxeGN1dnB4enBnd3JmcW9ibnVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMjUwMzEsImV4cCI6MjEwMjgwMTAzMX0.1MB-7R4MwVOXdOIgsDWkTei1L7O9XPBMSQ0_VT9Eu2s";
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -17,8 +16,6 @@ async function init() {
   await loadFolders();
   await fetchSavedBooks();
 }
-
-// --- FOLDER & FILE MANAGEMENT ---
 
 document.getElementById('new-folder-btn').addEventListener('click', () => {
   const name = prompt("Enter new folder name:");
@@ -105,8 +102,6 @@ async function fetchSavedBooks() {
   }
 }
 
-// --- PDF RENDERING & STATE CLEARING ---
-
 async function loadPDFFromStorage(filePath) {
   clearOverlayLayers();
   
@@ -187,8 +182,6 @@ async function renderPage(num) {
   loadAnnotations(num);
 }
 
-// --- ANNOTATIONS: CREATE, READ, UPDATE, DELETE ---
-
 document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed) return;
@@ -261,7 +254,6 @@ async function loadAnnotations(num) {
     list.appendChild(card);
   });
 
-  // Attach event listeners dynamically to fix scoping issues
   document.querySelectorAll('.edit-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const id = e.target.getAttribute('data-id');
@@ -315,7 +307,6 @@ async function deleteAnnotation(id) {
   }
 }
 
-// Navigation Controls
 document.getElementById('prev').addEventListener('click', () => {
   if (pageNum <= 1) return;
   pageNum--;
