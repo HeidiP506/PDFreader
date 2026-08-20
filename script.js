@@ -8,64 +8,115 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 let pdfDoc = null;
 let pageNum = 1;
 let currentBookId = "";
+let currentFolder = "All";
 const currentUserId = "demo-user";
 
-fetchSavedBooks();
+init();
 
-// 1. Upload PDF to lowercase 'pdf-files' bucket
+async function init() {
+  await loadFolders();
+  await fetchSavedBooks();
+}
+
+// --- FOLDER & FILE MANAGEMENT ---
+
+document.getElementById('new-folder-btn').addEventListener('click', () => {
+  const name = prompt("Enter new folder name:");
+  if (name) {
+    const selector = document.getElementById('folder-selector');
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    selector.appendChild(opt);
+    selector.value = name;
+    currentFolder = name;
+    fetchSavedBooks();
+  }
+});
+
+document.getElementById('folder-selector').addEventListener('change', (e) => {
+  currentFolder = e.target.value;
+  fetchSavedBooks();
+});
+
 document.getElementById('pdf-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
   currentBookId = file.name.replace(/[^a-zA-Z0-9]/g, "_");
+  const folderPath = currentFolder === "All" ? "Uncategorized" : currentFolder;
+  const storagePath = `${currentUserId}/${folderPath}/${currentBookId}.pdf`;
 
   const { error } = await supabaseClient.storage
     .from('pdf-files')
-    .upload(`${currentUserId}/${currentBookId}.pdf`, file, { upsert: true });
+    .upload(storagePath, file, { upsert: true });
 
   if (error) {
-    console.error("Storage upload error:", error);
     alert("Upload failed: " + error.message);
     return;
   }
 
+  await loadFolders();
   await fetchSavedBooks();
-  document.getElementById('book-selector').value = currentBookId;
-  loadPDFFromStorage(currentBookId);
+  document.getElementById('book-selector').value = storagePath;
+  loadPDFFromStorage(storagePath);
 });
 
-// 2. Select Saved Book from Dropdown
 document.getElementById('book-selector').addEventListener('change', (e) => {
   if (e.target.value) {
-    currentBookId = e.target.value;
-    loadPDFFromStorage(currentBookId);
+    loadPDFFromStorage(e.target.value);
   }
 });
 
-// Fetch list of saved PDFs
-async function fetchSavedBooks() {
-  const { data: files } = await supabaseClient.storage.from('pdf-files').list(currentUserId);
-  const selector = document.getElementById('book-selector');
-  selector.innerHTML = '<option value="">-- Select Saved Book --</option>';
+async function loadFolders() {
+  const { data: rootFolders } = await supabaseClient.storage.from('pdf-files').list(currentUserId);
+  const selector = document.getElementById('folder-selector');
+  selector.innerHTML = '<option value="All">All Folders</option>';
 
-  if (files) {
-    files.forEach(file => {
-      if (file.name.endsWith('.pdf')) {
-        const bookId = file.name.replace('.pdf', '');
+  if (rootFolders) {
+    rootFolders.forEach(item => {
+      if (!item.name.endsWith('.pdf')) {
         const opt = document.createElement('option');
-        opt.value = bookId;
-        opt.textContent = file.name;
+        opt.value = item.name;
+        opt.textContent = item.name;
         selector.appendChild(opt);
       }
     });
   }
 }
 
-// Download PDF bytes via Public URL
-async function loadPDFFromStorage(bookId) {
+async function fetchSavedBooks() {
+  const selector = document.getElementById('book-selector');
+  selector.innerHTML = '<option value="">-- Select Saved Book --</option>';
+
+  const targetPath = currentFolder === "All" ? "" : currentFolder;
+  const { data: items } = await supabaseClient.storage.from('pdf-files').list(`${currentUserId}/${targetPath}`);
+
+  if (items) {
+    for (const item of items) {
+      if (item.name.endsWith('.pdf')) {
+        const fullPath = targetPath ? `${currentUserId}/${targetPath}/${item.name}` : `${currentUserId}/${item.name}`;
+        const opt = document.createElement('option');
+        opt.value = fullPath;
+        opt.textContent = item.name;
+        selector.appendChild(opt);
+      }
+    }
+  }
+}
+
+// --- PDF RENDERING & STATE CLEARING ---
+
+async function loadPDFFromStorage(filePath) {
+  // Clear prior canvas & overlays when switching books
+  clearOverlayLayers();
+  
+  const pathParts = filePath.split('/');
+  currentBookId = pathParts[pathParts.length - 1].replace('.pdf', '');
+
   const { data: publicUrlData } = supabaseClient.storage
     .from('pdf-files')
-    .getPublicUrl(`${currentUserId}/${bookId}.pdf`);
+    .getPublicUrl(filePath);
 
   try {
     const response = await fetch(publicUrlData.publicUrl);
@@ -79,7 +130,7 @@ async function loadPDFFromStorage(bookId) {
       .from('progress')
       .select('last_viewed_page')
       .eq('user_id', currentUserId)
-      .eq('book_id', bookId)
+      .eq('book_id', currentBookId)
       .single();
 
     pageNum = progress ? progress.last_viewed_page : 1;
@@ -90,7 +141,15 @@ async function loadPDFFromStorage(bookId) {
   }
 }
 
+function clearOverlayLayers() {
+  document.getElementById('annotation-layer').innerHTML = '';
+  document.getElementById('text-layer').innerHTML = '';
+  document.getElementById('annotation-list').innerHTML = 'No annotations on this page.';
+}
+
 async function renderPage(num) {
+  clearOverlayLayers();
+
   const page = await pdfDoc.getPage(num);
   const viewport = page.getViewport({ scale: 1.5 });
 
@@ -107,7 +166,6 @@ async function renderPage(num) {
   document.getElementById('page-num').textContent = num;
 
   const textLayerDiv = document.getElementById('text-layer');
-  textLayerDiv.innerHTML = '';
   textLayerDiv.style.width = `${viewport.width}px`;
   textLayerDiv.style.height = `${viewport.height}px`;
 
@@ -130,7 +188,8 @@ async function renderPage(num) {
   loadAnnotations(num);
 }
 
-// Handle annotations
+// --- ANNOTATIONS: CREATE, READ, UPDATE, DELETE ---
+
 document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed) return;
@@ -140,17 +199,13 @@ document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
   const wrapperRect = document.getElementById('pdf-wrapper').getBoundingClientRect();
 
   const userComment = prompt("Add a comment/note for this text (optional):") || "";
-
   const annotation = {
     x: rect.left - wrapperRect.left,
     y: rect.top - wrapperRect.top,
     w: rect.width,
     h: rect.height
   };
-
   const type = document.getElementById('mode').value;
-
-  drawAnnotationBox(annotation, type, userComment);
 
   await supabaseClient.from('annotations').insert({
     book_id: currentBookId,
@@ -162,7 +217,44 @@ document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
   });
 
   selection.removeAllRanges();
+  loadAnnotations(pageNum);
 });
+
+async function loadAnnotations(num) {
+  const layer = document.getElementById('annotation-layer');
+  const list = document.getElementById('annotation-list');
+  layer.innerHTML = '';
+  list.innerHTML = '';
+
+  const { data: items } = await supabaseClient
+    .from('annotations')
+    .select('*')
+    .eq('book_id', currentBookId)
+    .eq('page_number', num);
+
+  if (!items || items.length === 0) {
+    list.innerHTML = 'No annotations on this page.';
+    return;
+  }
+
+  items.forEach(item => {
+    // Render visual overlay
+    drawAnnotationBox(item.rects, item.annotation_type, item.comment_text);
+
+    // Render sidebar controls
+    const card = document.createElement('div');
+    card.className = 'annotation-card';
+    card.innerHTML = `
+      <p><strong>Type:</strong> ${item.annotation_type}</p>
+      <p><strong>Note:</strong> ${item.comment_text || '<em>No comment</em>'}</p>
+      <div class="actions">
+        <button onclick="editAnnotation(${item.id}, '${item.comment_text || ''}')">Edit Note</button>
+        <button class="danger" onclick="deleteAnnotation(${item.id})">Delete</button>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+}
 
 function drawAnnotationBox(rect, type, commentText) {
   const layer = document.getElementById('annotation-layer');
@@ -180,21 +272,28 @@ function drawAnnotationBox(rect, type, commentText) {
   layer.appendChild(box);
 }
 
-async function loadAnnotations(num) {
-  const layer = document.getElementById('annotation-layer');
-  layer.innerHTML = '';
-
-  const { data: items } = await supabaseClient
-    .from('annotations')
-    .select('*')
-    .eq('book_id', currentBookId)
-    .eq('page_number', num);
-
-  if (items) {
-    items.forEach(item => drawAnnotationBox(item.rects, item.annotation_type, item.comment_text));
+async function editAnnotation(id, currentText) {
+  const newText = prompt("Update comment:", currentText);
+  if (newText !== null) {
+    await supabaseClient
+      .from('annotations')
+      .update({ comment_text: newText })
+      .eq('id', id);
+    loadAnnotations(pageNum);
   }
 }
 
+async function deleteAnnotation(id) {
+  if (confirm("Delete this annotation?")) {
+    await supabaseClient
+      .from('annotations')
+      .delete()
+      .eq('id', id);
+    loadAnnotations(pageNum);
+  }
+}
+
+// Navigation Controls
 document.getElementById('prev').addEventListener('click', () => {
   if (pageNum <= 1) return;
   pageNum--;
