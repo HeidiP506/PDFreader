@@ -7,21 +7,98 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 let pdfDoc = null;
 let pageNum = 1;
 let currentBookId = "";
+let currentFilePath = "";
 let currentFolder = "All";
 const currentUserId = "demo-user";
 
-// Drag-to-Draw state tracking
+// Drag-to-Draw State
 let isDragging = false;
 let startX = 0;
 let startY = 0;
 
+// Swipe Gesture State
+let touchStartX = 0;
+let touchEndX = 0;
+
 init();
 
 async function init() {
+  setupExtraUIControls();
+  setupKeyboardAndSwipe();
   await loadFolders();
   await fetchSavedBooks();
 }
 
+function setupExtraUIControls() {
+  const controlsDiv = document.querySelector('.reader-controls') || document.body;
+
+  // Add Move & Delete buttons if missing
+  if (!document.getElementById('move-book-btn')) {
+    const moveBtn = document.createElement('button');
+    moveBtn.id = 'move-book-btn';
+    moveBtn.textContent = 'Move PDF';
+    moveBtn.addEventListener('click', moveCurrentPDF);
+    controlsDiv.appendChild(moveBtn);
+  }
+
+  if (!document.getElementById('delete-book-btn')) {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.id = 'delete-book-btn';
+    deleteBtn.className = 'danger';
+    deleteBtn.textContent = 'Delete PDF';
+    deleteBtn.addEventListener('click', deleteCurrentPDF);
+    controlsDiv.appendChild(deleteBtn);
+  }
+}
+
+// Keyboard (Arrow Keys) & Touch (Swipe) Event Listeners
+function setupKeyboardAndSwipe() {
+  document.addEventListener('keydown', (e) => {
+    // Prevent accidental page flip when typing in a prompt or input field
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+
+    if (e.key === 'ArrowLeft') {
+      goToPrevPage();
+    } else if (e.key === 'ArrowRight') {
+      goToNextPage();
+    }
+  });
+
+  const wrapper = document.getElementById('pdf-wrapper');
+
+  wrapper.addEventListener('touchstart', (e) => {
+    touchStartX = e.changedTouches[0].screenX;
+  }, { passive: true });
+
+  wrapper.addEventListener('touchend', (e) => {
+    touchEndX = e.changedTouches[0].screenX;
+    handleSwipe();
+  }, { passive: true });
+}
+
+function handleSwipe() {
+  const swipeThreshold = 50; // Minimum distance to trigger swipe action
+  if (touchEndX < touchStartX - swipeThreshold) {
+    goToNextPage();
+  }
+  if (touchEndX > touchStartX + swipeThreshold) {
+    goToPrevPage();
+  }
+}
+
+function goToPrevPage() {
+  if (!pdfDoc || pageNum <= 1) return;
+  pageNum--;
+  renderPage(pageNum);
+}
+
+function goToNextPage() {
+  if (!pdfDoc || pageNum >= pdfDoc.numPages) return;
+  pageNum++;
+  renderPage(pageNum);
+}
+
+// Folder & Upload Handlers
 document.getElementById('new-folder-btn').addEventListener('click', () => {
   const name = prompt("Enter new folder name:");
   if (name) {
@@ -111,6 +188,7 @@ async function fetchSavedBooks() {
 
 async function loadPDFFromStorage(filePath) {
   clearOverlayLayers();
+  currentFilePath = filePath;
   
   const pathParts = filePath.split('/');
   const rawFileName = pathParts[pathParts.length - 1];
@@ -142,6 +220,63 @@ async function loadPDFFromStorage(filePath) {
     console.error("Download Error:", err);
     alert("Error loading PDF from storage: " + err.message);
   }
+}
+
+// Move and Delete PDF Operations
+async function moveCurrentPDF() {
+  if (!currentFilePath) return alert("Select a PDF first.");
+
+  const destinationFolder = prompt("Enter target folder name (e.g. Work, Personal, Uncategorized):");
+  if (!destinationFolder) return;
+
+  const fileName = currentFilePath.split('/').pop();
+  const newPath = `${currentUserId}/${destinationFolder}/${fileName}`;
+
+  const { error } = await supabaseClient.storage
+    .from('pdf-files')
+    .move(currentFilePath, newPath);
+
+  if (error) {
+    alert("Move failed: " + error.message);
+    return;
+  }
+
+  alert("Book moved successfully.");
+  await loadFolders();
+  await fetchSavedBooks();
+  document.getElementById('book-selector').value = newPath;
+  loadPDFFromStorage(newPath);
+}
+
+async function deleteCurrentPDF() {
+  if (!currentFilePath) return alert("Select a PDF first.");
+
+  if (!confirm("Are you sure you want to delete this PDF and its annotations?")) return;
+
+  const { error } = await supabaseClient.storage
+    .from('pdf-files')
+    .remove([currentFilePath]);
+
+  if (error) {
+    alert("Delete failed: " + error.message);
+    return;
+  }
+
+  // Clear annotations and progress records
+  await supabaseClient.from('annotations').delete().eq('book_id', currentBookId);
+  await supabaseClient.from('progress').delete().eq('book_id', currentBookId);
+
+  alert("PDF deleted.");
+  pdfDoc = null;
+  currentFilePath = "";
+  currentBookId = "";
+  clearOverlayLayers();
+  
+  const canvas = document.getElementById('pdf-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  await fetchSavedBooks();
 }
 
 function clearOverlayLayers() {
@@ -176,8 +311,7 @@ async function renderPage(num) {
   wrapper.style.setProperty('--scale-factor', viewport.scale);
 
   const textContent = await page.getTextContent();
-  
-  // Render text layer
+
   try {
     pdfjsLib.renderTextLayer({
       textContentSource: textContent,
@@ -186,7 +320,7 @@ async function renderPage(num) {
       textDivs: []
     });
   } catch (e) {
-    console.log("Text layer legacy fallback triggered");
+    console.log("Text layer render fallback");
   }
 
   if (currentBookId) {
@@ -200,12 +334,10 @@ async function renderPage(num) {
   loadAnnotations(num);
 }
 
-// --- HYBRID ANNOTATION HANDLER (TEXT SELECTION OR DRAWING) ---
-
+// Annotation Drag & Selection Handler
 const wrapper = document.getElementById('pdf-wrapper');
 
 wrapper.addEventListener('mousedown', (e) => {
-  // Only register draw drag if clicking on wrapper or text layer directly
   if (e.target.id === 'pdf-canvas' || e.target.classList.contains('textLayer') || e.target.id === 'annotation-layer') {
     isDragging = true;
     const wrapperRect = wrapper.getBoundingClientRect();
@@ -219,7 +351,6 @@ wrapper.addEventListener('mouseup', async (e) => {
   const wrapperRect = wrapper.getBoundingClientRect();
   let rect = null;
 
-  // 1. Try standard text selection first
   if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
     const range = selection.getRangeAt(0);
     const clientRect = range.getBoundingClientRect();
@@ -230,29 +361,25 @@ wrapper.addEventListener('mouseup', async (e) => {
       h: clientRect.height
     };
     selection.removeAllRanges();
-  } 
-  // 2. Fall back to drag-drawing if no text selection was detected
-  else if (isDragging) {
+  } else if (isDragging) {
     const endX = e.clientX - wrapperRect.left;
     const endY = e.clientY - wrapperRect.top;
 
     const width = Math.abs(endX - startX);
     const height = Math.abs(endY - startY);
 
-    // Only create annotation if drag distance is greater than 8px (prevents accidental clicks)
     if (width > 8 || height > 8) {
       rect = {
         x: Math.min(startX, endX),
         y: Math.min(startY, endY),
         w: width,
-        h: height > 8 ? height : 15 // Ensure minimum height for underlines/lines
+        h: height > 8 ? height : 15
       };
     }
   }
 
   isDragging = false;
 
-  // If we got valid coordinates from either method, save to Supabase
   if (rect && rect.w > 0) {
     const userComment = prompt("Add a comment/note for this annotation (optional):") || "";
     const type = document.getElementById('mode').value;
@@ -368,14 +495,5 @@ async function deleteAnnotation(id) {
   }
 }
 
-document.getElementById('prev').addEventListener('click', () => {
-  if (pageNum <= 1) return;
-  pageNum--;
-  renderPage(pageNum);
-});
-
-document.getElementById('next').addEventListener('click', () => {
-  if (pageNum >= pdfDoc.numPages) return;
-  pageNum++;
-  renderPage(pageNum);
-});
+document.getElementById('prev').addEventListener('click', goToPrevPage);
+document.getElementById('next').addEventListener('click', goToNextPage);
