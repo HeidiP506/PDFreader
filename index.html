@@ -5,11 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PDF Reader & Annotator</title>
   
-  <!-- PDF.js Styles & Script -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  
-  <!-- Supabase JS Client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
   <style>
@@ -22,7 +19,7 @@
       border-radius: 8px; 
       margin-bottom: 15px; 
       display: flex; 
-      gap: 15px; 
+      gap: 12px; 
       align-items: center; 
       flex-wrap: wrap; 
       box-shadow: 0 2px 6px rgba(0,0,0,0.08); 
@@ -37,41 +34,56 @@
 
     button { background: #0066cc; color: white; border: none; cursor: pointer; }
     button:hover { background: #0052a3; }
+    button.danger { background: #d9534f; }
+    button.danger:hover { background: #c9302c; }
+
+    #main-container { display: flex; gap: 20px; align-items: flex-start; }
 
     #pdf-wrapper { position: relative; display: inline-block; border: 1px solid #ddd; background: white; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
     
-    /* PDF Text Layer (Enables Text Selection) */
     .textLayer { position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; opacity: 0.2; line-height: 1.0; }
-    
-    /* Annotation Layer Overlay */
     .annotation-layer { position: absolute; left: 0; top: 0; pointer-events: none; width: 100%; height: 100%; }
     
     .highlight { position: absolute; background-color: rgba(255, 235, 59, 0.5); pointer-events: auto; cursor: pointer; }
     .underline { position: absolute; border-bottom: 3px solid #e53935; pointer-events: auto; cursor: pointer; }
-    
-    /* Tooltip Hover for Comments */
-    .highlight:hover::after, .underline:hover::after {
-      content: attr(data-comment);
-      position: absolute;
-      bottom: 100%;
-      left: 0;
-      background: #222;
-      color: #fff;
-      padding: 5px 9px;
-      font-size: 12px;
-      border-radius: 4px;
-      white-space: nowrap;
-      z-index: 100;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+
+    /* Sidebar for Annotation List */
+    #sidebar {
+      width: 280px;
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      max-height: 80vh;
+      overflow-y: auto;
     }
+
+    .annotation-card {
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 10px;
+      margin-bottom: 10px;
+      background: #fafafa;
+    }
+
+    .annotation-card p { margin: 0 0 8px 0; font-size: 13px; }
+    .annotation-card .actions { display: flex; gap: 8px; }
+    .annotation-card button { padding: 3px 8px; font-size: 12px; }
   </style>
 </head>
 <body>
 
   <div id="toolbar">
+    <label><strong>Folder:</strong>
+      <select id="folder-selector">
+        <option value="All">All Folders</option>
+      </select>
+    </label>
+    <button id="new-folder-btn">+ New Folder</button>
+
     <label><strong>Upload PDF:</strong> <input type="file" id="pdf-upload" accept="application/pdf" /></label>
     
-    <label><strong>My Saved Books:</strong> 
+    <label><strong>Book:</strong> 
       <select id="book-selector">
         <option value="">-- Select Saved Book --</option>
       </select>
@@ -89,13 +101,19 @@
     </label>
   </div>
 
-  <div id="pdf-wrapper">
-    <canvas id="pdf-canvas"></canvas>
-    <div id="text-layer" class="textLayer"></div>
-    <div id="annotation-layer" class="annotation-layer"></div>
+  <div id="main-container">
+    <div id="pdf-wrapper">
+      <canvas id="pdf-canvas"></canvas>
+      <div id="text-layer" class="textLayer"></div>
+      <div id="annotation-layer" class="annotation-layer"></div>
+    </div>
+
+    <div id="sidebar">
+      <h3>Page Annotations</h3>
+      <div id="annotation-list">No annotations on this page.</div>
+    </div>
   </div>
 
-  <!-- Separate Script File -->
   <script src="script.js"></script>
 </body>
 </html>
