@@ -4,37 +4,58 @@
   <meta charset="UTF-8">
   <title>PDF Reader & Annotator</title>
   
-  <!-- PDF.js Styles & Scripts -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <!-- Supabase JS Client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
   <style>
     body { font-family: sans-serif; margin: 20px; background: #f5f5f5; }
-    #toolbar { background: #fff; padding: 10px; border-radius: 8px; margin-bottom: 15px; display: flex; gap: 10px; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    #toolbar { background: #fff; padding: 12px; border-radius: 8px; margin-bottom: 15px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     #pdf-wrapper { position: relative; display: inline-block; border: 1px solid #ccc; background: white; }
     
-    /* PDF Text Layer (Enables Text Selection) */
     .textLayer { position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; opacity: 0.2; line-height: 1.0; }
-    
-    /* Highlight & Underline Styling */
     .annotation-layer { position: absolute; left: 0; top: 0; pointer-events: none; width: 100%; height: 100%; }
-    .highlight { position: absolute; background-color: rgba(255, 235, 59, 0.5); pointer-events: auto; }
-    .underline { position: absolute; border-bottom: 2px solid red; pointer-events: auto; }
+    
+    .highlight { position: absolute; background-color: rgba(255, 235, 59, 0.5); pointer-events: auto; cursor: pointer; }
+    .underline { position: absolute; border-bottom: 3px solid red; pointer-events: auto; cursor: pointer; }
+    
+    /* Custom Tooltip for Comments */
+    .highlight:hover::after, .underline:hover::after {
+      content: attr(data-comment);
+      position: absolute;
+      bottom: 100%;
+      left: 0;
+      background: #333;
+      color: #fff;
+      padding: 4px 8px;
+      font-size: 12px;
+      border-radius: 4px;
+      white-space: nowrap;
+      z-index: 10;
+    }
   </style>
 </head>
 <body>
 
   <div id="toolbar">
-    <input type="file" id="pdf-upload" accept="application/pdf" />
+    <label><strong>Upload PDF:</strong> <input type="file" id="pdf-upload" accept="application/pdf" /></label>
+    
+    <label><strong>My Saved Books:</strong> 
+      <select id="book-selector">
+        <option value="">-- Select Saved Book --</option>
+      </select>
+    </label>
+
     <button id="prev">Previous</button>
     <span>Page: <span id="page-num">1</span> / <span id="page-count">--</span></span>
     <button id="next">Next</button>
-    <select id="mode">
-      <option value="highlight">Highlight Text</option>
-      <option value="underline">Underline Text</option>
-    </select>
+
+    <label><strong>Mode:</strong>
+      <select id="mode">
+        <option value="highlight">Highlight Text</option>
+        <option value="underline">Underline Text</option>
+      </select>
+    </label>
   </div>
 
   <div id="pdf-wrapper">
@@ -44,7 +65,6 @@
   </div>
 
   <script>
-    // Supabase Credentials
     const SUPABASE_URL = "https://tqxcuvpxzpgwrfqobnur.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxeGN1dnB4enBnd3JmcW9ibnVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMjUwMzEsImV4cCI6MjEwMjgwMTAzMX0.1MB-7R4MwVOXdOIgsDWkTei1L7O9XPBMSQ0_VT9Eu2s";
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -56,37 +76,76 @@
     let currentBookId = "";
     const currentUserId = "demo-user";
 
-    // Handle File Selection
+    // Load initial list of saved books on page load
+    fetchSavedBooks();
+
+    // 1. Handle File Upload & Save PDF to Storage
     document.getElementById('pdf-upload').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
 
       currentBookId = file.name.replace(/[^a-zA-Z0-9]/g, "_");
 
-      // 1. Upload to Supabase Storage (Optional sync step)
+      // Upload file blob to Supabase Storage
       await supabaseClient.storage.from('pdf-files').upload(`${currentUserId}/${currentBookId}.pdf`, file, { upsert: true });
 
-      // 2. Read locally and display PDF
-      const arrayBuffer = await file.arrayBuffer();
+      await fetchSavedBooks();
+      document.getElementById('book-selector').value = currentBookId;
+      loadPDFFromStorage(currentBookId);
+    });
+
+    // 2. Select Saved Book from Dropdown
+    document.getElementById('book-selector').addEventListener('change', (e) => {
+      if (e.target.value) {
+        currentBookId = e.target.value;
+        loadPDFFromStorage(currentBookId);
+      }
+    });
+
+    // Fetch list of PDFs from Supabase Storage bucket
+    async function fetchSavedBooks() {
+      const { data: files } = await supabaseClient.storage.from('pdf-files').list(currentUserId);
+      const selector = document.getElementById('book-selector');
+      selector.innerHTML = '<option value="">-- Select Saved Book --</option>';
+
+      if (files) {
+        files.forEach(file => {
+          const bookId = file.name.replace('.pdf', '');
+          const opt = document.createElement('option');
+          opt.value = bookId;
+          opt.textContent = file.name;
+          selector.appendChild(opt);
+        });
+      }
+    }
+
+    // Load raw PDF file bytes from Supabase Storage
+    async function loadPDFFromStorage(bookId) {
+      const { data, error } = await supabaseClient.storage
+        .from('pdf-files')
+        .download(`${currentUserId}/${bookId}.pdf`);
+
+      if (error) return alert("Error downloading PDF");
+
+      const arrayBuffer = await data.arrayBuffer();
       pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
       document.getElementById('page-count').textContent = pdfDoc.numPages;
 
-      // 3. Fetch saved page history
+      // Restore saved progress
       const { data: progress } = await supabaseClient
         .from('progress')
         .select('last_viewed_page')
         .eq('user_id', currentUserId)
-        .eq('book_id', currentBookId)
+        .eq('book_id', bookId)
         .single();
 
       pageNum = progress ? progress.last_viewed_page : 1;
       renderPage(pageNum);
-    });
+    }
 
     async function renderPage(num) {
       const page = await pdfDoc.getPage(num);
-      const scale = 1.5;
-      const viewport = page.getViewport({ scale: scale });
+      const viewport = page.getViewport({ scale: 1.5 });
 
       const canvas = document.getElementById('pdf-canvas');
       const ctx = canvas.getContext('2d');
@@ -97,11 +156,10 @@
       wrapper.style.width = `${viewport.width}px`;
       wrapper.style.height = `${viewport.height}px`;
 
-      // Render Canvas
       await page.render({ canvasContext: ctx, viewport: viewport }).promise;
       document.getElementById('page-num').textContent = num;
 
-      // Render Text Layer for Highlights/Selection
+      // Text Layer Rendering
       const textLayerDiv = document.getElementById('text-layer');
       textLayerDiv.innerHTML = '';
       textLayerDiv.style.width = `${viewport.width}px`;
@@ -115,7 +173,7 @@
         textDivs: []
       });
 
-      // Save reading progress to Supabase
+      // Save page progress
       if (currentBookId) {
         await supabaseClient.from('progress').upsert({
           user_id: currentUserId,
@@ -127,7 +185,7 @@
       loadAnnotations(num);
     }
 
-    // Capture Text Highlights and Underlines
+    // 3. Highlight / Underline & Add Comment Prompt
     document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) return;
@@ -136,7 +194,8 @@
       const rect = range.getBoundingClientRect();
       const wrapperRect = document.getElementById('pdf-wrapper').getBoundingClientRect();
 
-      // Relative coordinates relative to PDF Container
+      const userComment = prompt("Add a comment for this annotation (optional):") || "";
+
       const annotation = {
         x: rect.left - wrapperRect.left,
         y: rect.top - wrapperRect.top,
@@ -146,22 +205,22 @@
 
       const type = document.getElementById('mode').value;
 
-      // Draw annotation on screen
-      drawAnnotationBox(annotation, type);
+      drawAnnotationBox(annotation, type, userComment);
 
-      // Save annotation to Supabase
+      // Save annotation + comment text to database
       await supabaseClient.from('annotations').insert({
         book_id: currentBookId,
         user_id: currentUserId,
         page_number: pageNum,
         annotation_type: type,
-        rects: annotation
+        rects: annotation,
+        comment_text: userComment
       });
 
       selection.removeAllRanges();
     });
 
-    function drawAnnotationBox(rect, type) {
+    function drawAnnotationBox(rect, type, commentText) {
       const layer = document.getElementById('annotation-layer');
       const box = document.createElement('div');
       box.className = type;
@@ -169,6 +228,11 @@
       box.style.top = `${rect.y}px`;
       box.style.width = `${rect.w}px`;
       box.style.height = `${rect.h}px`;
+
+      if (commentText) {
+        box.setAttribute('data-comment', commentText);
+      }
+
       layer.appendChild(box);
     }
 
@@ -183,11 +247,10 @@
         .eq('page_number', num);
 
       if (items) {
-        items.forEach(item => drawAnnotationBox(item.rects, item.annotation_type));
+        items.forEach(item => drawAnnotationBox(item.rects, item.annotation_type, item.comment_text));
       }
     }
 
-    // Navigation Controls
     document.getElementById('prev').addEventListener('click', () => {
       if (pageNum <= 1) return;
       pageNum--;
