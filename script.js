@@ -13,7 +13,7 @@ const currentUserId = "demo-user";
 
 // Annotation Color & Mode States
 let activeMode = "highlight";
-let activeHighlightColor = "#ffeb3b80"; // Semi-transparent yellow default
+let activeHighlightColor = "#ffeb3b80"; // Semi-transparent yellow
 let activeUnderlineColor = "#2196f3";   // Blue default
 
 // Drag-to-Draw State
@@ -28,10 +28,19 @@ let touchEndX = 0;
 init();
 
 async function init() {
+  removeRedundantToolbar();
   setupStickySideToolbar();
   setupKeyboardAndSwipe();
   setupFileExplorerUI();
   await loadFileExplorer(currentFolderPath);
+}
+
+// Remove the old toolbar bar completely if it exists in DOM
+function removeRedundantToolbar() {
+  const oldControls = document.querySelector('.reader-controls');
+  if (oldControls) {
+    oldControls.remove();
+  }
 }
 
 function setupStickySideToolbar() {
@@ -42,7 +51,6 @@ function setupStickySideToolbar() {
     document.body.appendChild(sidebar);
   }
 
-  // Pin sidebar to the right edge of screen
   sidebar.style.cssText = `
     position: fixed;
     top: 80px;
@@ -72,11 +80,16 @@ function setupStickySideToolbar() {
         </button>
       </div>
 
-      <div style="display: flex; align-items: center; justify-content: space-between; background: #f8fafc; padding: 8px 10px; border-radius: 6px; border: 1px solid #f1f5f9;">
+      <div style="display: flex; align-items: center; justify-content: space-between; background: #f8fafc; padding: 8px 10px; border-radius: 6px; border: 1px solid #f1f5f9; margin-bottom: 12px;">
         <span style="font-size: 12px; font-weight: 500; color: #475569;">Active Color:</span>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <input type="color" id="sticky-color-picker" value="#ffeb3b" style="border: none; width: 28px; height: 28px; cursor: pointer; background: none; border-radius: 50%;">
-        </div>
+        <input type="color" id="sticky-color-picker" value="#ffeb3b" style="border: none; width: 28px; height: 28px; cursor: pointer; background: none; border-radius: 50%;">
+      </div>
+
+      <!-- Page Navigation Integrated Directly Into Sidebar -->
+      <div style="display: flex; align-items: center; justify-content: space-between; background: #f1f5f9; padding: 6px 10px; border-radius: 6px;">
+        <button id="sticky-prev-btn" style="padding: 4px 10px; font-size: 11px; font-weight: 600; border: 1px solid #cbd5e1; background: #fff; border-radius: 4px; cursor: pointer;">Previous</button>
+        <span style="font-size: 11px; font-weight: 600; color: #475569;">Page <span id="sticky-page-num">0</span> / <span id="sticky-page-count">0</span></span>
+        <button id="sticky-next-btn" style="padding: 4px 10px; font-size: 11px; font-weight: 600; border: 1px solid #cbd5e1; background: #fff; border-radius: 4px; cursor: pointer;">Next</button>
       </div>
     </div>
 
@@ -93,7 +106,7 @@ function setupStickySideToolbar() {
     </div>
   `;
 
-  // Bind Switcher Buttons
+  // Bind Switcher & Action Buttons
   const highlightBtn = document.getElementById('tool-btn-highlight');
   const underlineBtn = document.getElementById('tool-btn-underline');
   const colorPicker = document.getElementById('sticky-color-picker');
@@ -124,6 +137,8 @@ function setupStickySideToolbar() {
     }
   });
 
+  document.getElementById('sticky-prev-btn').addEventListener('click', goToPrevPage);
+  document.getElementById('sticky-next-btn').addEventListener('click', goToNextPage);
   document.getElementById('sticky-move-btn').addEventListener('click', moveCurrentPDF);
   document.getElementById('sticky-delete-btn').addEventListener('click', deleteCurrentPDF);
 }
@@ -139,8 +154,7 @@ function setupFileExplorerUI() {
     explorerContainer.style.border = '1px solid #e2e8f0';
     explorerContainer.style.marginBottom = '20px';
 
-    const parent = document.querySelector('.reader-controls') || document.body;
-    parent.parentNode.insertBefore(explorerContainer, parent);
+    document.body.insertBefore(explorerContainer, document.body.firstChild);
   }
 }
 
@@ -157,14 +171,24 @@ async function loadFileExplorer(folderSubPath = "") {
     return;
   }
 
+  // Directory header featuring both + New Folder AND Upload PDF inline
   let html = `
-    <div style="display:flex; align-items:center; justify-space:between; margin-bottom:14px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
       <div style="font-weight:600; font-size:14px; color:#334155;">
-        📂 Directory: <span style="color:#2563eb; cursor:pointer;" onclick="navigateToFolder('')">Home</span> 
+        📁 Directory: <span style="color:#2563eb; cursor:pointer;" onclick="navigateToFolder('')">Home</span> 
         ${folderSubPath ? ` / <span>${folderSubPath}</span>` : ''}
       </div>
-      <button id="explorer-new-folder-btn" style="padding:6px 12px; font-size:12px; font-weight:600; background:#3b82f6; color:#fff; border:none; border-radius:6px; cursor:pointer;">+ New Folder</button>
+      
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button id="explorer-new-folder-btn" style="padding:6px 12px; font-size:12px; font-weight:600; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer;">+ New Folder</button>
+        
+        <label for="explorer-upload-input" style="padding:6px 12px; font-size:12px; font-weight:600; background:#059669; color:#fff; border-radius:6px; cursor:pointer; display:inline-block;">
+          📤 Upload PDF
+        </label>
+        <input type="file" id="explorer-upload-input" accept="application/pdf" style="display:none;" />
+      </div>
     </div>
+
     <div id="explorer-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap:12px;">
   `;
 
@@ -203,7 +227,7 @@ async function loadFileExplorer(folderSubPath = "") {
   html += `</div>`;
   explorerContainer.innerHTML = html;
 
-  // Bind Explorer Folder/File Click Events
+  // Bind Explorer Card Clicks
   document.querySelectorAll('.explorer-card[data-is-pdf]').forEach(card => {
     card.addEventListener('click', () => {
       const isPDF = card.getAttribute('data-is-pdf') === 'true';
@@ -226,6 +250,30 @@ async function loadFileExplorer(folderSubPath = "") {
       currentFolderPath = currentFolderPath ? `${currentFolderPath}/${name}` : name;
       await loadFileExplorer(currentFolderPath);
     }
+  });
+
+  // Bind File Upload Action
+  document.getElementById('explorer-upload-input')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    currentBookId = cleanFileName.replace(/\.pdf$/i, '');
+
+    const folderPath = currentFolderPath || "Uncategorized";
+    const storagePath = `${currentUserId}/${folderPath}/${cleanFileName}`;
+
+    const { error } = await supabaseClient.storage
+      .from('pdf-files')
+      .upload(storagePath, file, { upsert: true });
+
+    if (error) {
+      alert("Upload failed: " + error.message);
+      return;
+    }
+
+    await loadFileExplorer(currentFolderPath);
+    loadPDFFromStorage(storagePath);
   });
 }
 
@@ -253,15 +301,16 @@ function setupKeyboardAndSwipe() {
   });
 
   const wrapper = document.getElementById('pdf-wrapper');
+  if (wrapper) {
+    wrapper.addEventListener('touchstart', (e) => {
+      touchStartX = e.changedTouches[0].screenX;
+    }, { passive: true });
 
-  wrapper.addEventListener('touchstart', (e) => {
-    touchStartX = e.changedTouches[0].screenX;
-  }, { passive: true });
-
-  wrapper.addEventListener('touchend', (e) => {
-    touchEndX = e.changedTouches[0].screenX;
-    handleSwipe();
-  }, { passive: true });
+    wrapper.addEventListener('touchend', (e) => {
+      touchEndX = e.changedTouches[0].screenX;
+      handleSwipe();
+    }, { passive: true });
+  }
 }
 
 function handleSwipe() {
@@ -286,29 +335,6 @@ function goToNextPage() {
   renderPage(pageNum);
 }
 
-document.getElementById('pdf-upload')?.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  currentBookId = cleanFileName.replace('.pdf', '');
-
-  const folderPath = currentFolderPath || "Uncategorized";
-  const storagePath = `${currentUserId}/${folderPath}/${cleanFileName}`;
-
-  const { error } = await supabaseClient.storage
-    .from('pdf-files')
-    .upload(storagePath, file, { upsert: true });
-
-  if (error) {
-    alert("Upload failed: " + error.message);
-    return;
-  }
-
-  await loadFileExplorer(currentFolderPath);
-  loadPDFFromStorage(storagePath);
-});
-
 async function loadPDFFromStorage(filePath) {
   clearOverlayLayers();
   currentFilePath = filePath;
@@ -328,7 +354,8 @@ async function loadPDFFromStorage(filePath) {
 
     const arrayBuffer = await response.arrayBuffer();
     pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
-    document.getElementById('page-count').textContent = pdfDoc.numPages;
+
+    updatePageCounters(1, pdfDoc.numPages);
 
     const { data: progress } = await supabaseClient
       .from('progress')
@@ -343,6 +370,13 @@ async function loadPDFFromStorage(filePath) {
     console.error("Download Error:", err);
     alert("Error loading PDF from storage: " + err.message);
   }
+}
+
+function updatePageCounters(current, total) {
+  const numEl = document.getElementById('sticky-page-num');
+  const countEl = document.getElementById('sticky-page-count');
+  if (numEl) numEl.textContent = current;
+  if (countEl) countEl.textContent = total;
 }
 
 async function moveCurrentPDF() {
@@ -393,21 +427,25 @@ async function deleteCurrentPDF() {
   clearOverlayLayers();
 
   const canvas = document.getElementById('pdf-canvas');
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (canvas) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
 
-  document.getElementById('page-num').textContent = '0';
-  document.getElementById('page-count').textContent = '0';
-
+  updatePageCounters(0, 0);
   await loadFileExplorer(currentFolderPath);
 
   alert("Book deleted permanently.");
 }
 
 function clearOverlayLayers() {
-  document.getElementById('annotation-layer').innerHTML = '';
-  document.getElementById('text-layer').innerHTML = '';
-  document.getElementById('annotation-list').innerHTML = '<div style="color:#94a3b8; font-size:12px; font-style:italic;">No annotations on this page.</div>';
+  const annLayer = document.getElementById('annotation-layer');
+  const txtLayer = document.getElementById('text-layer');
+  const annList = document.getElementById('annotation-list');
+
+  if (annLayer) annLayer.innerHTML = '';
+  if (txtLayer) txtLayer.innerHTML = '';
+  if (annList) annList.innerHTML = '<div style="color:#94a3b8; font-size:12px; font-style:italic;">No annotations on this page.</div>';
 }
 
 async function renderPage(num) {
@@ -426,7 +464,7 @@ async function renderPage(num) {
   wrapper.style.height = `${viewport.height}px`;
 
   await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-  document.getElementById('page-num').textContent = num;
+  updatePageCounters(num, pdfDoc.numPages);
 
   const textLayerDiv = document.getElementById('text-layer');
   textLayerDiv.style.width = `${viewport.width}px`;
@@ -460,79 +498,80 @@ async function renderPage(num) {
 }
 
 const wrapper = document.getElementById('pdf-wrapper');
+if (wrapper) {
+  wrapper.addEventListener('mousedown', (e) => {
+    if (e.target.id === 'pdf-canvas' || e.target.classList.contains('textLayer') || e.target.id === 'annotation-layer') {
+      isDragging = true;
+      const wrapperRect = wrapper.getBoundingClientRect();
+      startX = e.clientX - wrapperRect.left;
+      startY = e.clientY - wrapperRect.top;
+    }
+  });
 
-wrapper.addEventListener('mousedown', (e) => {
-  if (e.target.id === 'pdf-canvas' || e.target.classList.contains('textLayer') || e.target.id === 'annotation-layer') {
-    isDragging = true;
+  wrapper.addEventListener('mouseup', async (e) => {
+    const selection = window.getSelection();
     const wrapperRect = wrapper.getBoundingClientRect();
-    startX = e.clientX - wrapperRect.left;
-    startY = e.clientY - wrapperRect.top;
-  }
-});
+    let rect = null;
 
-wrapper.addEventListener('mouseup', async (e) => {
-  const selection = window.getSelection();
-  const wrapperRect = wrapper.getBoundingClientRect();
-  let rect = null;
-
-  if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
-    const range = selection.getRangeAt(0);
-    const clientRect = range.getBoundingClientRect();
-    rect = {
-      x: clientRect.left - wrapperRect.left,
-      y: clientRect.top - wrapperRect.top,
-      w: clientRect.width,
-      h: clientRect.height
-    };
-    selection.removeAllRanges();
-  } else if (isDragging) {
-    const endX = e.clientX - wrapperRect.left;
-    const endY = e.clientY - wrapperRect.top;
-
-    const width = Math.abs(endX - startX);
-    const height = Math.abs(endY - startY);
-
-    if (width > 8 || height > 8) {
+    if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
+      const range = selection.getRangeAt(0);
+      const clientRect = range.getBoundingClientRect();
       rect = {
-        x: Math.min(startX, endX),
-        y: Math.min(startY, endY),
-        w: width,
-        h: height > 8 ? height : 15
+        x: clientRect.left - wrapperRect.left,
+        y: clientRect.top - wrapperRect.top,
+        w: clientRect.width,
+        h: clientRect.height
       };
-    }
-  }
+      selection.removeAllRanges();
+    } else if (isDragging) {
+      const endX = e.clientX - wrapperRect.left;
+      const endY = e.clientY - wrapperRect.top;
 
-  isDragging = false;
+      const width = Math.abs(endX - startX);
+      const height = Math.abs(endY - startY);
 
-  if (rect && rect.w > 0) {
-    const userComment = prompt("Add a comment/note for this annotation (optional):") || "";
-    const color = activeMode === 'underline' ? activeUnderlineColor : activeHighlightColor;
-
-    const { error } = await supabaseClient.from('annotations').insert({
-      book_id: currentBookId,
-      user_id: currentUserId,
-      page_number: pageNum,
-      annotation_type: activeMode,
-      rects: { ...rect, color: color },
-      comment_text: userComment,
-      created_at: new Date().toISOString()
-    });
-
-    if (error) {
-      console.error("Error inserting annotation:", error);
-      alert("Save failed: " + error.message);
-      return;
+      if (width > 8 || height > 8) {
+        rect = {
+          x: Math.min(startX, endX),
+          y: Math.min(startY, endY),
+          w: width,
+          h: height > 8 ? height : 15
+        };
+      }
     }
 
-    loadAnnotations(pageNum);
-  }
-});
+    isDragging = false;
+
+    if (rect && rect.w > 0) {
+      const userComment = prompt("Add a comment/note for this annotation (optional):") || "";
+      const color = activeMode === 'underline' ? activeUnderlineColor : activeHighlightColor;
+
+      const { error } = await supabaseClient.from('annotations').insert({
+        book_id: currentBookId,
+        user_id: currentUserId,
+        page_number: pageNum,
+        annotation_type: activeMode,
+        rects: { ...rect, color: color },
+        comment_text: userComment,
+        created_at: new Date().toISOString()
+      });
+
+      if (error) {
+        console.error("Error inserting annotation:", error);
+        alert("Save failed: " + error.message);
+        return;
+      }
+
+      loadAnnotations(pageNum);
+    }
+  });
+}
 
 async function loadAnnotations(num) {
   const layer = document.getElementById('annotation-layer');
   const list = document.getElementById('annotation-list');
-  layer.innerHTML = '';
-  list.innerHTML = '';
+  if (layer) layer.innerHTML = '';
+  if (list) list.innerHTML = '';
 
   const { data: items, error } = await supabaseClient
     .from('annotations')
@@ -546,43 +585,45 @@ async function loadAnnotations(num) {
   }
 
   if (!items || items.length === 0) {
-    list.innerHTML = '<div style="color:#94a3b8; font-size:12px; font-style:italic;">No annotations on this page.</div>';
+    if (list) list.innerHTML = '<div style="color:#94a3b8; font-size:12px; font-style:italic;">No annotations on this page.</div>';
     return;
   }
 
   items.forEach(item => {
     drawAnnotationBox(item.rects, item.annotation_type, item.comment_text);
 
-    const card = document.createElement('div');
-    card.className = 'annotation-card';
-    card.style.cssText = `
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 8px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    `;
+    if (list) {
+      const card = document.createElement('div');
+      card.className = 'annotation-card';
+      card.style.cssText = `
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      `;
 
-    const badgeColor = item.annotation_type === 'underline' ? '#0284c7' : '#ca8a04';
-    const badgeIcon = item.annotation_type === 'underline' ? '✏️ Underline' : '🖍️ Highlight';
+      const badgeColor = item.annotation_type === 'underline' ? '#0284c7' : '#ca8a04';
+      const badgeIcon = item.annotation_type === 'underline' ? '✏️ Underline' : '🖍️ Highlight';
 
-    card.innerHTML = `
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px;">
-        <span style="background:${badgeColor}15; color:${badgeColor}; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 10px; border: 1px solid ${badgeColor}30;">
-          ${badgeIcon}
-        </span>
-        <span style="font-size: 10px; color: #94a3b8;">Page ${item.page_number}</span>
-      </div>
-      <div style="font-size: 12px; color: #334155; margin-bottom: 8px; line-height: 1.3;">
-        ${item.comment_text ? item.comment_text : '<em style="color:#a1a1aa;">No comment</em>'}
-      </div>
-      <div class="actions" style="display:flex; gap: 6px; justify-content: flex-end;">
-        <button class="edit-btn" data-id="${item.id}" data-text="${item.comment_text || ''}" style="background:#f1f5f9; border:1px solid #cbd5e1; color:#475569; padding:2px 6px; font-size:10px; border-radius:4px; cursor:pointer;">✏️ Edit</button>
-        <button class="danger delete-btn" data-id="${item.id}" style="background:#fee2e2; border:1px solid #fca5a5; color:#dc2626; padding:2px 6px; font-size:10px; border-radius:4px; cursor:pointer;">🗑️ Delete</button>
-      </div>
-    `;
-    list.appendChild(card);
+      card.innerHTML = `
+        <div style="display:flex; align-items:center; justify-space:between; margin-bottom: 6px;">
+          <span style="background:${badgeColor}15; color:${badgeColor}; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 10px; border: 1px solid ${badgeColor}30;">
+            ${badgeIcon}
+          </span>
+          <span style="font-size: 10px; color: #94a3b8;">Page ${item.page_number}</span>
+        </div>
+        <div style="font-size: 12px; color: #334155; margin-bottom: 8px; line-height: 1.3;">
+          ${item.comment_text ? item.comment_text : '<em style="color:#a1a1aa;">No comment</em>'}
+        </div>
+        <div class="actions" style="display:flex; gap: 6px; justify-content: flex-end;">
+          <button class="edit-btn" data-id="${item.id}" data-text="${item.comment_text || ''}" style="background:#f1f5f9; border:1px solid #cbd5e1; color:#475569; padding:2px 6px; font-size:10px; border-radius:4px; cursor:pointer;">✏️ Edit</button>
+          <button class="danger delete-btn" data-id="${item.id}" style="background:#fee2e2; border:1px solid #fca5a5; color:#dc2626; padding:2px 6px; font-size:10px; border-radius:4px; cursor:pointer;">🗑️ Delete</button>
+        </div>
+      `;
+      list.appendChild(card);
+    }
   });
 
   document.querySelectorAll('.edit-btn').forEach(btn => {
@@ -603,6 +644,8 @@ async function loadAnnotations(num) {
 
 function drawAnnotationBox(rect, type, commentText) {
   const layer = document.getElementById('annotation-layer');
+  if (!layer) return;
+
   const box = document.createElement('div');
   box.className = type;
   box.style.position = 'absolute';
@@ -644,6 +687,3 @@ async function deleteAnnotation(id) {
     loadAnnotations(pageNum);
   }
 }
-
-document.getElementById('prev')?.addEventListener('click', goToPrevPage);
-document.getElementById('next')?.addEventListener('click', goToNextPage);
