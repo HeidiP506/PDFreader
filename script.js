@@ -8,8 +8,12 @@ let pdfDoc = null;
 let pageNum = 1;
 let currentBookId = "";
 let currentFilePath = "";
-let currentFolder = "All";
+let currentFolderPath = ""; // Track current directory path in the explorer
 const currentUserId = "demo-user";
+
+// Annotation Color States
+let activeHighlightColor = "#ffeb3b80"; // Semi-transparent yellow default
+let activeUnderlineColor = "#2196f3";   // Blue default
 
 // Drag-to-Draw State
 let isDragging = false;
@@ -25,17 +29,50 @@ init();
 async function init() {
   setupExtraUIControls();
   setupKeyboardAndSwipe();
-  await loadFolders();
-  await fetchSavedBooks();
+  setupFileExplorerUI();
+  await loadFileExplorer(currentFolderPath);
 }
 
 function setupExtraUIControls() {
   const controlsDiv = document.querySelector('.reader-controls') || document.body;
 
+  // Modernized Mode Selector with Color Pickers
+  if (!document.getElementById('tool-style-controls')) {
+    const styleGroup = document.createElement('div');
+    styleGroup.id = 'tool-style-controls';
+    styleGroup.style.display = 'inline-flex';
+    styleGroup.style.alignItems = 'center';
+    styleGroup.style.gap = '8px';
+    styleGroup.style.margin = '0 10px';
+
+    styleGroup.innerHTML = `
+      <label for="highlight-color-picker" title="Highlighter Color" style="cursor:pointer; display:flex; align-items:center; gap:4px;">
+        🖍️ <input type="color" id="highlight-color-picker" value="#ffeb3b" style="border:none; width:24px; height:24px; cursor:pointer; background:none;">
+      </label>
+      <label for="underline-color-picker" title="Underline Color" style="cursor:pointer; display:flex; align-items:center; gap:4px;">
+        ✏️ <input type="color" id="underline-color-picker" value="#2196f3" style="border:none; width:24px; height:24px; cursor:pointer; background:none;">
+      </label>
+    `;
+    controlsDiv.appendChild(styleGroup);
+
+    document.getElementById('highlight-color-picker').addEventListener('input', (e) => {
+      // Convert hex to rgba with alpha for transparent highlighter effect
+      const hex = e.target.value;
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      activeHighlightColor = `rgba(${r}, ${g}, ${b}, 0.45)`;
+    });
+
+    document.getElementById('underline-color-picker').addEventListener('input', (e) => {
+      activeUnderlineColor = e.target.value;
+    });
+  }
+
   if (!document.getElementById('move-book-btn')) {
     const moveBtn = document.createElement('button');
     moveBtn.id = 'move-book-btn';
-    moveBtn.textContent = 'Move PDF';
+    moveBtn.innerHTML = '📁 Move PDF';
     moveBtn.addEventListener('click', moveCurrentPDF);
     controlsDiv.appendChild(moveBtn);
   }
@@ -44,11 +81,124 @@ function setupExtraUIControls() {
     const deleteBtn = document.createElement('button');
     deleteBtn.id = 'delete-book-btn';
     deleteBtn.className = 'danger';
-    deleteBtn.textContent = 'Delete PDF';
+    deleteBtn.innerHTML = '🗑️ Delete PDF';
     deleteBtn.addEventListener('click', deleteCurrentPDF);
     controlsDiv.appendChild(deleteBtn);
   }
 }
+
+function setupFileExplorerUI() {
+  let explorerContainer = document.getElementById('file-explorer');
+  
+  if (!explorerContainer) {
+    explorerContainer = document.createElement('div');
+    explorerContainer.id = 'file-explorer';
+    explorerContainer.style.padding = '15px';
+    explorerContainer.style.background = '#f8f9fa';
+    explorerContainer.style.borderRadius = '8px';
+    explorerContainer.style.border = '1px solid #e9ecef';
+    explorerContainer.style.marginBottom = '20px';
+
+    const parent = document.querySelector('.reader-controls') || document.body;
+    parent.parentNode.insertBefore(explorerContainer, parent);
+  }
+}
+
+async function loadFileExplorer(folderSubPath = "") {
+  const explorerContainer = document.getElementById('file-explorer');
+  const targetPath = folderSubPath ? `${currentUserId}/${folderSubPath}` : currentUserId;
+
+  const { data: items, error } = await supabaseClient.storage
+    .from('pdf-files')
+    .list(targetPath);
+
+  if (error) {
+    console.error("Storage list error:", error);
+    return;
+  }
+
+  let html = `
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+      <div style="font-weight:600; font-size:14px; color:#495057;">
+        📂 Location: <span style="color:#0d6efd; cursor:pointer;" onclick="navigateToFolder('')">Home</span> 
+        ${folderSubPath ? ` / <span>${folderSubPath}</span>` : ''}
+      </div>
+      <button id="explorer-new-folder-btn" style="padding:4px 10px; font-size:12px; cursor:pointer;">+ New Folder</button>
+    </div>
+    <div id="explorer-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap:12px;">
+  `;
+
+  if (folderSubPath !== "") {
+    html += `
+      <div class="explorer-card" onclick="navigateUpFolder()" style="border:1px solid #dee2e6; border-radius:6px; padding:10px; text-align:center; background:#fff; cursor:pointer;">
+        <div style="font-size:28px;">⬆️</div>
+        <div style="font-size:12px; font-weight:bold; color:#6c757d; margin-top:4px;">.. Back</div>
+      </div>
+    `;
+  }
+
+  if (items) {
+    items.forEach(item => {
+      const isPDF = item.name.endsWith('.pdf');
+      const icon = isPDF ? '📄' : '📁';
+      const fullItemPath = folderSubPath ? `${folderSubPath}/${item.name}` : item.name;
+
+      html += `
+        <div class="explorer-card" 
+             data-path="${currentUserId}/${fullItemPath}" 
+             data-subpath="${fullItemPath}"
+             data-is-pdf="${isPDF}"
+             style="border:1px solid #dee2e6; border-radius:6px; padding:10px; text-align:center; background:#fff; cursor:pointer; transition:transform 0.1s;"
+             onmouseover="this.style.transform='scale(1.03)'" 
+             onmouseout="this.style.transform='scale(1)'">
+          <div style="font-size:32px;">${icon}</div>
+          <div style="font-size:11px; word-break:break-word; margin-top:6px; color:#333; font-weight:500;">
+            ${item.name}
+          </div>
+        </div>
+      `;
+    });
+  }
+
+  html += `</div>`;
+  explorerContainer.innerHTML = html;
+
+  // Bind Explorer Card Clicks
+  document.querySelectorAll('.explorer-card[data-is-pdf]').forEach(card => {
+    card.addEventListener('click', () => {
+      const isPDF = card.getAttribute('data-is-pdf') === 'true';
+      const path = card.getAttribute('data-path');
+      const subpath = card.getAttribute('data-subpath');
+
+      if (isPDF) {
+        loadPDFFromStorage(path);
+      } else {
+        currentFolderPath = subpath;
+        loadFileExplorer(currentFolderPath);
+      }
+    });
+  });
+
+  document.getElementById('explorer-new-folder-btn')?.addEventListener('click', async () => {
+    const name = prompt("Enter new folder name:");
+    if (name) {
+      currentFolderPath = currentFolderPath ? `${currentFolderPath}/${name}` : name;
+      await loadFileExplorer(currentFolderPath);
+    }
+  });
+}
+
+window.navigateToFolder = function(path) {
+  currentFolderPath = path;
+  loadFileExplorer(path);
+};
+
+window.navigateUpFolder = function() {
+  const parts = currentFolderPath.split('/');
+  parts.pop();
+  currentFolderPath = parts.join('/');
+  loadFileExplorer(currentFolderPath);
+};
 
 function setupKeyboardAndSwipe() {
   document.addEventListener('keydown', (e) => {
@@ -95,33 +245,14 @@ function goToNextPage() {
   renderPage(pageNum);
 }
 
-document.getElementById('new-folder-btn').addEventListener('click', () => {
-  const name = prompt("Enter new folder name:");
-  if (name) {
-    const selector = document.getElementById('folder-selector');
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    selector.appendChild(opt);
-    selector.value = name;
-    currentFolder = name;
-    fetchSavedBooks();
-  }
-});
-
-document.getElementById('folder-selector').addEventListener('change', (e) => {
-  currentFolder = e.target.value;
-  fetchSavedBooks();
-});
-
-document.getElementById('pdf-upload').addEventListener('change', async (e) => {
+document.getElementById('pdf-upload')?.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
   const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   currentBookId = cleanFileName.replace('.pdf', '');
 
-  const folderPath = currentFolder === "All" ? "Uncategorized" : currentFolder;
+  const folderPath = currentFolderPath || "Uncategorized";
   const storagePath = `${currentUserId}/${folderPath}/${cleanFileName}`;
 
   const { error } = await supabaseClient.storage
@@ -133,95 +264,9 @@ document.getElementById('pdf-upload').addEventListener('change', async (e) => {
     return;
   }
 
-  await loadFolders();
-  await fetchSavedBooks();
-  document.getElementById('book-selector').value = storagePath;
+  await loadFileExplorer(currentFolderPath);
   loadPDFFromStorage(storagePath);
 });
-
-document.getElementById('book-selector').addEventListener('change', (e) => {
-  if (e.target.value) {
-    loadPDFFromStorage(e.target.value);
-  }
-});
-
-async function loadFolders() {
-  const { data: rootFolders } = await supabaseClient.storage.from('pdf-files').list(currentUserId);
-  const selector = document.getElementById('folder-selector');
-  selector.innerHTML = '<option value="All">All Folders</option>';
-
-  if (rootFolders) {
-    rootFolders.forEach(item => {
-      if (!item.name.endsWith('.pdf')) {
-        const opt = document.createElement('option');
-        opt.value = item.name;
-        opt.textContent = item.name;
-        selector.appendChild(opt);
-      }
-    });
-  }
-}
-
-async function fetchSavedBooks() {
-  const selector = document.getElementById('book-selector');
-  selector.innerHTML = '<option value="">-- Select Saved Book --</option>';
-
-  let filesToDisplay = [];
-
-  if (currentFolder === "All") {
-    const { data: rootItems } = await supabaseClient.storage
-      .from('pdf-files')
-      .list(currentUserId);
-
-    if (rootItems) {
-      for (const item of rootItems) {
-        if (item.name.endsWith('.pdf')) {
-          filesToDisplay.push({
-            path: `${currentUserId}/${item.name}`,
-            name: item.name
-          });
-        } else {
-          const { data: subItems } = await supabaseClient.storage
-            .from('pdf-files')
-            .list(`${currentUserId}/${item.name}`);
-
-          if (subItems) {
-            subItems.forEach(subItem => {
-              if (subItem.name.endsWith('.pdf')) {
-                filesToDisplay.push({
-                  path: `${currentUserId}/${item.name}/${subItem.name}`,
-                  name: subItem.name
-                });
-              }
-            });
-          }
-        }
-      }
-    }
-  } else {
-    const { data: items } = await supabaseClient.storage
-      .from('pdf-files')
-      .list(`${currentUserId}/${currentFolder}`);
-
-    if (items) {
-      items.forEach(item => {
-        if (item.name.endsWith('.pdf')) {
-          filesToDisplay.push({
-            path: `${currentUserId}/${currentFolder}/${item.name}`,
-            name: item.name
-          });
-        }
-      });
-    }
-  }
-
-  filesToDisplay.forEach(file => {
-    const opt = document.createElement('option');
-    opt.value = file.path;
-    opt.textContent = file.name;
-    selector.appendChild(opt);
-  });
-}
 
 async function loadPDFFromStorage(filePath) {
   clearOverlayLayers();
@@ -262,7 +307,7 @@ async function loadPDFFromStorage(filePath) {
 async function moveCurrentPDF() {
   if (!currentFilePath) return alert("Select a PDF first.");
 
-  const destinationFolder = prompt("Enter target folder name (e.g. Work, Personal, Uncategorized):");
+  const destinationFolder = prompt("Enter target folder name (e.g. Work, Personal, School):");
   if (!destinationFolder) return;
 
   const fileName = currentFilePath.split('/').pop();
@@ -278,9 +323,7 @@ async function moveCurrentPDF() {
   }
 
   alert("Book moved successfully.");
-  await loadFolders();
-  await fetchSavedBooks();
-  document.getElementById('book-selector').value = newPath;
+  await loadFileExplorer(destinationFolder);
   loadPDFFromStorage(newPath);
 }
 
@@ -289,7 +332,6 @@ async function deleteCurrentPDF() {
 
   if (!confirm("Are you sure you want to delete this PDF and its annotations?")) return;
 
-  const selector = document.getElementById('book-selector');
   const deletedPath = currentFilePath;
 
   const { error } = await supabaseClient.storage
@@ -304,15 +346,9 @@ async function deleteCurrentPDF() {
   await supabaseClient.from('annotations').delete().eq('book_id', currentBookId);
   await supabaseClient.from('progress').delete().eq('book_id', currentBookId);
 
-  const optionToRemove = selector.querySelector(`option[value="${CSS.escape(deletedPath)}"]`);
-  if (optionToRemove) {
-    optionToRemove.remove();
-  }
-
   pdfDoc = null;
   currentFilePath = "";
   currentBookId = "";
-  selector.value = "";
   clearOverlayLayers();
 
   const canvas = document.getElementById('pdf-canvas');
@@ -322,7 +358,7 @@ async function deleteCurrentPDF() {
   document.getElementById('page-num').textContent = '0';
   document.getElementById('page-count').textContent = '0';
 
-  await fetchSavedBooks();
+  await loadFileExplorer(currentFolderPath);
 
   alert("Book deleted permanently.");
 }
@@ -330,7 +366,7 @@ async function deleteCurrentPDF() {
 function clearOverlayLayers() {
   document.getElementById('annotation-layer').innerHTML = '';
   document.getElementById('text-layer').innerHTML = '';
-  document.getElementById('annotation-list').innerHTML = 'No annotations on this page.';
+  document.getElementById('annotation-list').innerHTML = '<div style="color:#888; font-style:italic;">No annotations on this page.</div>';
 }
 
 async function renderPage(num) {
@@ -429,14 +465,17 @@ wrapper.addEventListener('mouseup', async (e) => {
 
   if (rect && rect.w > 0) {
     const userComment = prompt("Add a comment/note for this annotation (optional):") || "";
-    const type = document.getElementById('mode').value;
+    const type = document.getElementById('mode') ? document.getElementById('mode').value : "highlight";
+    
+    // Store custom chosen color into the record
+    const color = type === 'underline' ? activeUnderlineColor : activeHighlightColor;
 
     const { error } = await supabaseClient.from('annotations').insert({
       book_id: currentBookId,
       user_id: currentUserId,
       page_number: pageNum,
       annotation_type: type,
-      rects: rect,
+      rects: { ...rect, color: color },
       comment_text: userComment,
       created_at: new Date().toISOString()
     });
@@ -469,21 +508,42 @@ async function loadAnnotations(num) {
   }
 
   if (!items || items.length === 0) {
-    list.innerHTML = 'No annotations on this page.';
+    list.innerHTML = '<div style="color:#888; font-style:italic;">No annotations on this page.</div>';
     return;
   }
 
   items.forEach(item => {
     drawAnnotationBox(item.rects, item.annotation_type, item.comment_text);
 
+    // Modernized Comment Card Layout
     const card = document.createElement('div');
     card.className = 'annotation-card';
+    card.style.cssText = `
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+      transition: box-shadow 0.2s ease;
+    `;
+
+    const badgeColor = item.annotation_type === 'underline' ? '#2196f3' : '#eab308';
+    const badgeIcon = item.annotation_type === 'underline' ? '✏️ Underline' : '🖍️ Highlight';
+
     card.innerHTML = `
-      <p><strong>Type:</strong> ${item.annotation_type}</p>
-      <p><strong>Note:</strong> ${item.comment_text || '<em>No comment</em>'}</p>
-      <div class="actions">
-        <button class="edit-btn" data-id="${item.id}" data-text="${item.comment_text || ''}">Edit Note</button>
-        <button class="danger delete-btn" data-id="${item.id}">Delete</button>
+      <div style="display:flex; align-items:center; justify-style:space-between; margin-bottom: 8px;">
+        <span style="background:${badgeColor}20; color:${badgeColor}; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 12px; border: 1px solid ${badgeColor}40;">
+          ${badgeIcon}
+        </span>
+        <span style="font-size: 11px; color: #94a3b8; margin-left: auto;">Page ${item.page_number}</span>
+      </div>
+      <div style="font-size: 13px; color: #334155; margin-bottom: 10px; line-height: 1.4;">
+        ${item.comment_text ? item.comment_text : '<em style="color:#a1a1aa;">No note added</em>'}
+      </div>
+      <div class="actions" style="display:flex; gap: 8px; justify-content: flex-end;">
+        <button class="edit-btn" data-id="${item.id}" data-text="${item.comment_text || ''}" style="background:#f1f5f9; border:1px solid #cbd5e1; color:#475569; padding:4px 8px; font-size:11px; border-radius:4px; cursor:pointer;">✏️ Edit</button>
+        <button class="danger delete-btn" data-id="${item.id}" style="background:#fee2e2; border:1px solid #fca5a5; color:#dc2626; padding:4px 8px; font-size:11px; border-radius:4px; cursor:pointer;">🗑️ Delete</button>
       </div>
     `;
     list.appendChild(card);
@@ -509,10 +569,17 @@ function drawAnnotationBox(rect, type, commentText) {
   const layer = document.getElementById('annotation-layer');
   const box = document.createElement('div');
   box.className = type;
+  box.style.position = 'absolute';
   box.style.left = `${rect.x}px`;
   box.style.top = `${rect.y}px`;
   box.style.width = `${rect.w}px`;
   box.style.height = `${rect.h}px`;
+
+  if (type === 'underline') {
+    box.style.borderBottom = `3px solid ${rect.color || activeUnderlineColor}`;
+  } else {
+    box.style.backgroundColor = rect.color || activeHighlightColor;
+  }
 
   if (commentText) {
     box.setAttribute('data-comment', commentText);
@@ -542,5 +609,5 @@ async function deleteAnnotation(id) {
   }
 }
 
-document.getElementById('prev').addEventListener('click', goToPrevPage);
-document.getElementById('next').addEventListener('click', goToNextPage);
+document.getElementById('prev')?.addEventListener('click', goToPrevPage);
+document.getElementById('next')?.addEventListener('click', goToNextPage);
