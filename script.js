@@ -10,23 +10,23 @@ let pageNum = 1;
 let currentBookId = "";
 const currentUserId = "demo-user";
 
-// Initial Load: Fetch saved books
 fetchSavedBooks();
 
-// 1. Handle File Upload to Supabase Storage (Matching uppercase bucket name)
+// 1. Upload PDF to lowercase 'pdf-files' bucket
 document.getElementById('pdf-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
   currentBookId = file.name.replace(/[^a-zA-Z0-9]/g, "_");
 
-  // Upload to uppercase PDF-FILES bucket
   const { error } = await supabaseClient.storage
-    .from('PDF-FILES')
+    .from('pdf-files')
     .upload(`${currentUserId}/${currentBookId}.pdf`, file, { upsert: true });
 
   if (error) {
     console.error("Storage upload error:", error);
+    alert("Upload failed: " + error.message);
+    return;
   }
 
   await fetchSavedBooks();
@@ -42,9 +42,9 @@ document.getElementById('book-selector').addEventListener('change', (e) => {
   }
 });
 
-// Fetch list of PDFs from Supabase Storage bucket
+// Fetch list of saved PDFs
 async function fetchSavedBooks() {
-  const { data: files, error } = await supabaseClient.storage.from('PDF-FILES').list(currentUserId);
+  const { data: files } = await supabaseClient.storage.from('pdf-files').list(currentUserId);
   const selector = document.getElementById('book-selector');
   selector.innerHTML = '<option value="">-- Select Saved Book --</option>';
 
@@ -61,10 +61,10 @@ async function fetchSavedBooks() {
   }
 }
 
-// Download raw PDF bytes using Public URL
+// Download PDF bytes via Public URL
 async function loadPDFFromStorage(bookId) {
   const { data: publicUrlData } = supabaseClient.storage
-    .from('PDF-FILES')
+    .from('pdf-files')
     .getPublicUrl(`${currentUserId}/${bookId}.pdf`);
 
   try {
@@ -75,7 +75,6 @@ async function loadPDFFromStorage(bookId) {
     pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
     document.getElementById('page-count').textContent = pdfDoc.numPages;
 
-    // Load reading progress
     const { data: progress } = await supabaseClient
       .from('progress')
       .select('last_viewed_page')
@@ -87,7 +86,7 @@ async function loadPDFFromStorage(bookId) {
     renderPage(pageNum);
   } catch (err) {
     console.error("Download Error:", err);
-    alert("Error loading PDF. Ensure bucket policies are run in Supabase SQL editor.");
+    alert("Error loading PDF from storage.");
   }
 }
 
@@ -104,11 +103,9 @@ async function renderPage(num) {
   wrapper.style.width = `${viewport.width}px`;
   wrapper.style.height = `${viewport.height}px`;
 
-  // Render Canvas
   await page.render({ canvasContext: ctx, viewport: viewport }).promise;
   document.getElementById('page-num').textContent = num;
 
-  // Render Interactive Text Layer
   const textLayerDiv = document.getElementById('text-layer');
   textLayerDiv.innerHTML = '';
   textLayerDiv.style.width = `${viewport.width}px`;
@@ -122,7 +119,6 @@ async function renderPage(num) {
     textDivs: []
   });
 
-  // Update reading progress
   if (currentBookId) {
     await supabaseClient.from('progress').upsert({
       user_id: currentUserId,
@@ -134,7 +130,7 @@ async function renderPage(num) {
   loadAnnotations(num);
 }
 
-// Capture Selection, Prompt for Comment, and Save
+// Handle annotations
 document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed) return;
@@ -156,7 +152,6 @@ document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
 
   drawAnnotationBox(annotation, type, userComment);
 
-  // Save annotation to database
   await supabaseClient.from('annotations').insert({
     book_id: currentBookId,
     user_id: currentUserId,
@@ -200,7 +195,6 @@ async function loadAnnotations(num) {
   }
 }
 
-// Navigation Controls
 document.getElementById('prev').addEventListener('click', () => {
   if (pageNum <= 1) return;
   pageNum--;
