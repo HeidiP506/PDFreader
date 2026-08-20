@@ -248,23 +248,36 @@ async function deleteCurrentPDF() {
 
   if (!confirm("Are you sure you want to delete this PDF and its annotations?")) return;
 
+  const selector = document.getElementById('book-selector');
+  const deletedPath = currentFilePath;
+
+  // 1. Remove from Supabase Storage
   const { error } = await supabaseClient.storage
     .from('pdf-files')
-    .remove([currentFilePath]);
+    .remove([deletedPath]);
 
   if (error) {
     alert("Delete failed: " + error.message);
     return;
   }
 
+  // 2. Clear Database entries
   await supabaseClient.from('annotations').delete().eq('book_id', currentBookId);
   await supabaseClient.from('progress').delete().eq('book_id', currentBookId);
 
+  // 3. Immediately remove option from HTML dropdown DOM
+  const optionToRemove = selector.querySelector(`option[value="${CSS.escape(deletedPath)}"]`);
+  if (optionToRemove) {
+    optionToRemove.remove();
+  }
+
+  // 4. Reset Viewer & Canvas State
   pdfDoc = null;
   currentFilePath = "";
   currentBookId = "";
+  selector.value = "";
   clearOverlayLayers();
-  
+
   const canvas = document.getElementById('pdf-canvas');
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -272,10 +285,10 @@ async function deleteCurrentPDF() {
   document.getElementById('page-num').textContent = '0';
   document.getElementById('page-count').textContent = '0';
 
+  // 5. Re-fetch storage list
   await fetchSavedBooks();
-  document.getElementById('book-selector').value = "";
 
-  alert("Book deleted successfully.");
+  alert("Book deleted permanently.");
 }
 
 function clearOverlayLayers() {
