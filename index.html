@@ -1,307 +1,118 @@
-// Supabase Credentials
-const SUPABASE_URL = "https://tqxcuvpxzpgwrfqobnur.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxeGN1dnB4enBnd3JmcW9ibnVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMjUwMzEsImV4cCI6MjEwMjgwMTAzMX0.1MB-7R4MwVOXdOIgsDWkTei1L7O9XPBMSQ0_VT9Eu2s";
-const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-let pdfDoc = null;
-let pageNum = 1;
-let currentBookId = "";
-let currentFolder = "All";
-const currentUserId = "demo-user";
-
-init();
-
-async function init() {
-  await loadFolders();
-  await fetchSavedBooks();
-}
-
-// --- FOLDER & FILE MANAGEMENT ---
-
-document.getElementById('new-folder-btn').addEventListener('click', () => {
-  const name = prompt("Enter new folder name:");
-  if (name) {
-    const selector = document.getElementById('folder-selector');
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    selector.appendChild(opt);
-    selector.value = name;
-    currentFolder = name;
-    fetchSavedBooks();
-  }
-});
-
-document.getElementById('folder-selector').addEventListener('change', (e) => {
-  currentFolder = e.target.value;
-  fetchSavedBooks();
-});
-
-document.getElementById('pdf-upload').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  currentBookId = file.name.replace(/[^a-zA-Z0-9]/g, "_");
-  const folderPath = currentFolder === "All" ? "Uncategorized" : currentFolder;
-  const storagePath = `${currentUserId}/${folderPath}/${currentBookId}.pdf`;
-
-  const { error } = await supabaseClient.storage
-    .from('pdf-files')
-    .upload(storagePath, file, { upsert: true });
-
-  if (error) {
-    alert("Upload failed: " + error.message);
-    return;
-  }
-
-  await loadFolders();
-  await fetchSavedBooks();
-  document.getElementById('book-selector').value = storagePath;
-  loadPDFFromStorage(storagePath);
-});
-
-document.getElementById('book-selector').addEventListener('change', (e) => {
-  if (e.target.value) {
-    loadPDFFromStorage(e.target.value);
-  }
-});
-
-async function loadFolders() {
-  const { data: rootFolders } = await supabaseClient.storage.from('pdf-files').list(currentUserId);
-  const selector = document.getElementById('folder-selector');
-  selector.innerHTML = '<option value="All">All Folders</option>';
-
-  if (rootFolders) {
-    rootFolders.forEach(item => {
-      if (!item.name.endsWith('.pdf')) {
-        const opt = document.createElement('option');
-        opt.value = item.name;
-        opt.textContent = item.name;
-        selector.appendChild(opt);
-      }
-    });
-  }
-}
-
-async function fetchSavedBooks() {
-  const selector = document.getElementById('book-selector');
-  selector.innerHTML = '<option value="">-- Select Saved Book --</option>';
-
-  const targetPath = currentFolder === "All" ? "" : currentFolder;
-  const { data: items } = await supabaseClient.storage.from('pdf-files').list(`${currentUserId}/${targetPath}`);
-
-  if (items) {
-    for (const item of items) {
-      if (item.name.endsWith('.pdf')) {
-        const fullPath = targetPath ? `${currentUserId}/${targetPath}/${item.name}` : `${currentUserId}/${item.name}`;
-        const opt = document.createElement('option');
-        opt.value = fullPath;
-        opt.textContent = item.name;
-        selector.appendChild(opt);
-      }
-    }
-  }
-}
-
-// --- PDF RENDERING & STATE CLEARING ---
-
-async function loadPDFFromStorage(filePath) {
-  // Clear prior canvas & overlays when switching books
-  clearOverlayLayers();
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Reader & Annotator</title>
   
-  const pathParts = filePath.split('/');
-  currentBookId = pathParts[pathParts.length - 1].replace('.pdf', '');
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  const { data: publicUrlData } = supabaseClient.storage
-    .from('pdf-files')
-    .getPublicUrl(filePath);
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 20px; background: #f4f6f8; color: #333; }
+    
+    #toolbar { 
+      background: #ffffff; 
+      padding: 12px 18px; 
+      border-radius: 8px; 
+      margin-bottom: 15px; 
+      display: flex; 
+      gap: 12px; 
+      align-items: center; 
+      flex-wrap: wrap; 
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08); 
+    }
 
-  try {
-    const response = await fetch(publicUrlData.publicUrl);
-    if (!response.ok) throw new Error("Could not fetch file");
+    button, select, input[type="file"] {
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
 
-    const arrayBuffer = await response.arrayBuffer();
-    pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
-    document.getElementById('page-count').textContent = pdfDoc.numPages;
+    button { background: #0066cc; color: white; border: none; cursor: pointer; }
+    button:hover { background: #0052a3; }
+    button.danger { background: #d9534f; }
+    button.danger:hover { background: #c9302c; }
 
-    const { data: progress } = await supabaseClient
-      .from('progress')
-      .select('last_viewed_page')
-      .eq('user_id', currentUserId)
-      .eq('book_id', currentBookId)
-      .single();
+    #main-container { display: flex; gap: 20px; align-items: flex-start; }
 
-    pageNum = progress ? progress.last_viewed_page : 1;
-    renderPage(pageNum);
-  } catch (err) {
-    console.error("Download Error:", err);
-    alert("Error loading PDF from storage.");
-  }
-}
+    #pdf-wrapper { position: relative; display: inline-block; border: 1px solid #ddd; background: white; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+    
+    .textLayer { position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; opacity: 0.2; line-height: 1.0; }
+    .annotation-layer { position: absolute; left: 0; top: 0; pointer-events: none; width: 100%; height: 100%; z-index: 10; }
+    
+    .highlight { position: absolute; background-color: rgba(255, 235, 59, 0.5); pointer-events: auto; cursor: pointer; }
+    .underline { position: absolute; border-bottom: 3px solid #e53935; pointer-events: auto; cursor: pointer; }
 
-function clearOverlayLayers() {
-  document.getElementById('annotation-layer').innerHTML = '';
-  document.getElementById('text-layer').innerHTML = '';
-  document.getElementById('annotation-list').innerHTML = 'No annotations on this page.';
-}
+    #sidebar {
+      width: 280px;
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      max-height: 80vh;
+      overflow-y: auto;
+    }
 
-async function renderPage(num) {
-  clearOverlayLayers();
+    .annotation-card {
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 10px;
+      margin-bottom: 10px;
+      background: #fafafa;
+    }
 
-  const page = await pdfDoc.getPage(num);
-  const viewport = page.getViewport({ scale: 1.5 });
+    .annotation-card p { margin: 0 0 8px 0; font-size: 13px; }
+    .annotation-card .actions { display: flex; gap: 8px; }
+    .annotation-card button { padding: 3px 8px; font-size: 12px; }
+  </style>
+</head>
+<body>
 
-  const canvas = document.getElementById('pdf-canvas');
-  const ctx = canvas.getContext('2d');
-  canvas.height = viewport.height;
-  canvas.width = viewport.width;
+  <div id="toolbar">
+    <label><strong>Folder:</strong>
+      <select id="folder-selector">
+        <option value="All">All Folders</option>
+      </select>
+    </label>
+    <button id="new-folder-btn">+ New Folder</button>
 
-  const wrapper = document.getElementById('pdf-wrapper');
-  wrapper.style.width = `${viewport.width}px`;
-  wrapper.style.height = `${viewport.height}px`;
+    <label><strong>Upload PDF:</strong> <input type="file" id="pdf-upload" accept="application/pdf" /></label>
+    
+    <label><strong>Book:</strong> 
+      <select id="book-selector">
+        <option value="">-- Select Saved Book --</option>
+      </select>
+    </label>
 
-  await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-  document.getElementById('page-num').textContent = num;
+    <button id="prev">Previous</button>
+    <span>Page: <span id="page-num">1</span> / <span id="page-count">--</span></span>
+    <button id="next">Next</button>
 
-  const textLayerDiv = document.getElementById('text-layer');
-  textLayerDiv.style.width = `${viewport.width}px`;
-  textLayerDiv.style.height = `${viewport.height}px`;
+    <label><strong>Mode:</strong>
+      <select id="mode">
+        <option value="highlight">Highlight Text</option>
+        <option value="underline">Underline Text</option>
+      </select>
+    </label>
+  </div>
 
-  const textContent = await page.getTextContent();
-  pdfjsLib.renderTextLayer({
-    textContentSource: textContent,
-    container: textLayerDiv,
-    viewport: viewport,
-    textDivs: []
-  });
+  <div id="main-container">
+    <div id="pdf-wrapper">
+      <canvas id="pdf-canvas"></canvas>
+      <div id="text-layer" class="textLayer"></div>
+      <div id="annotation-layer" class="annotation-layer"></div>
+    </div>
 
-  if (currentBookId) {
-    await supabaseClient.from('progress').upsert({
-      user_id: currentUserId,
-      book_id: currentBookId,
-      last_viewed_page: num
-    }, { onConflict: 'user_id,book_id' });
-  }
+    <div id="sidebar">
+      <h3>Page Annotations</h3>
+      <div id="annotation-list">No annotations on this page.</div>
+    </div>
+  </div>
 
-  loadAnnotations(num);
-}
-
-// --- ANNOTATIONS: CREATE, READ, UPDATE, DELETE ---
-
-document.getElementById('pdf-wrapper').addEventListener('mouseup', async () => {
-  const selection = window.getSelection();
-  if (!selection || selection.isCollapsed) return;
-
-  const range = selection.getRangeAt(0);
-  const rect = range.getBoundingClientRect();
-  const wrapperRect = document.getElementById('pdf-wrapper').getBoundingClientRect();
-
-  const userComment = prompt("Add a comment/note for this text (optional):") || "";
-  const annotation = {
-    x: rect.left - wrapperRect.left,
-    y: rect.top - wrapperRect.top,
-    w: rect.width,
-    h: rect.height
-  };
-  const type = document.getElementById('mode').value;
-
-  await supabaseClient.from('annotations').insert({
-    book_id: currentBookId,
-    user_id: currentUserId,
-    page_number: pageNum,
-    annotation_type: type,
-    rects: annotation,
-    comment_text: userComment
-  });
-
-  selection.removeAllRanges();
-  loadAnnotations(pageNum);
-});
-
-async function loadAnnotations(num) {
-  const layer = document.getElementById('annotation-layer');
-  const list = document.getElementById('annotation-list');
-  layer.innerHTML = '';
-  list.innerHTML = '';
-
-  const { data: items } = await supabaseClient
-    .from('annotations')
-    .select('*')
-    .eq('book_id', currentBookId)
-    .eq('page_number', num);
-
-  if (!items || items.length === 0) {
-    list.innerHTML = 'No annotations on this page.';
-    return;
-  }
-
-  items.forEach(item => {
-    // Render visual overlay
-    drawAnnotationBox(item.rects, item.annotation_type, item.comment_text);
-
-    // Render sidebar controls
-    const card = document.createElement('div');
-    card.className = 'annotation-card';
-    card.innerHTML = `
-      <p><strong>Type:</strong> ${item.annotation_type}</p>
-      <p><strong>Note:</strong> ${item.comment_text || '<em>No comment</em>'}</p>
-      <div class="actions">
-        <button onclick="editAnnotation(${item.id}, '${item.comment_text || ''}')">Edit Note</button>
-        <button class="danger" onclick="deleteAnnotation(${item.id})">Delete</button>
-      </div>
-    `;
-    list.appendChild(card);
-  });
-}
-
-function drawAnnotationBox(rect, type, commentText) {
-  const layer = document.getElementById('annotation-layer');
-  const box = document.createElement('div');
-  box.className = type;
-  box.style.left = `${rect.x}px`;
-  box.style.top = `${rect.y}px`;
-  box.style.width = `${rect.w}px`;
-  box.style.height = `${rect.h}px`;
-
-  if (commentText) {
-    box.setAttribute('data-comment', commentText);
-  }
-
-  layer.appendChild(box);
-}
-
-async function editAnnotation(id, currentText) {
-  const newText = prompt("Update comment:", currentText);
-  if (newText !== null) {
-    await supabaseClient
-      .from('annotations')
-      .update({ comment_text: newText })
-      .eq('id', id);
-    loadAnnotations(pageNum);
-  }
-}
-
-async function deleteAnnotation(id) {
-  if (confirm("Delete this annotation?")) {
-    await supabaseClient
-      .from('annotations')
-      .delete()
-      .eq('id', id);
-    loadAnnotations(pageNum);
-  }
-}
-
-// Navigation Controls
-document.getElementById('prev').addEventListener('click', () => {
-  if (pageNum <= 1) return;
-  pageNum--;
-  renderPage(pageNum);
-});
-
-document.getElementById('next').addEventListener('click', () => {
-  if (pageNum >= pdfDoc.numPages) return;
-  pageNum++;
-  renderPage(pageNum);
-});
+  <script src="script.js"></script>
+</body>
+</html>
