@@ -8,10 +8,11 @@ let pdfDoc = null;
 let pageNum = 1;
 let currentBookId = "";
 let currentFilePath = "";
-let currentFolderPath = ""; // Track current directory path in the explorer
+let currentFolderPath = ""; 
 const currentUserId = "demo-user";
 
-// Annotation Color States
+// Annotation Color & Mode States
+let activeMode = "highlight";
 let activeHighlightColor = "#ffeb3b80"; // Semi-transparent yellow default
 let activeUnderlineColor = "#2196f3";   // Blue default
 
@@ -27,76 +28,115 @@ let touchEndX = 0;
 init();
 
 async function init() {
-  setupExtraUIControls();
+  setupStickySideToolbar();
   setupKeyboardAndSwipe();
   setupFileExplorerUI();
   await loadFileExplorer(currentFolderPath);
 }
 
-function setupExtraUIControls() {
-  const controlsDiv = document.querySelector('.reader-controls') || document.body;
+function setupStickySideToolbar() {
+  let sidebar = document.getElementById('annotation-sidebar');
+  if (!sidebar) {
+    sidebar = document.createElement('div');
+    sidebar.id = 'annotation-sidebar';
+    document.body.appendChild(sidebar);
+  }
 
-  // Modernized Mode Selector with Color Pickers
-  if (!document.getElementById('tool-style-controls')) {
-    const styleGroup = document.createElement('div');
-    styleGroup.id = 'tool-style-controls';
-    styleGroup.style.display = 'inline-flex';
-    styleGroup.style.alignItems = 'center';
-    styleGroup.style.gap = '8px';
-    styleGroup.style.margin = '0 10px';
+  // Pin sidebar to the right edge of screen
+  sidebar.style.cssText = `
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    width: 280px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+  `;
 
-    styleGroup.innerHTML = `
-      <label for="highlight-color-picker" title="Highlighter Color" style="cursor:pointer; display:flex; align-items:center; gap:4px;">
-        🖍️ <input type="color" id="highlight-color-picker" value="#ffeb3b" style="border:none; width:24px; height:24px; cursor:pointer; background:none;">
-      </label>
-      <label for="underline-color-picker" title="Underline Color" style="cursor:pointer; display:flex; align-items:center; gap:4px;">
-        ✏️ <input type="color" id="underline-color-picker" value="#2196f3" style="border:none; width:24px; height:24px; cursor:pointer; background:none;">
-      </label>
-    `;
-    controlsDiv.appendChild(styleGroup);
+  sidebar.innerHTML = `
+    <!-- Floating Toolbar Controls -->
+    <div style="margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9;">
+      <div style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;">Annotation Tools</div>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+        <button id="tool-btn-highlight" style="padding: 8px; font-size: 12px; font-weight: 600; border-radius: 6px; border: 1px solid #e2e8f0; background: #fef08a; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+          🖍️ Highlight
+        </button>
+        <button id="tool-btn-underline" style="padding: 8px; font-size: 12px; font-weight: 600; border-radius: 6px; border: 1px solid #e2e8f0; background: #f1f5f9; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+          ✏️ Underline
+        </button>
+      </div>
 
-    document.getElementById('highlight-color-picker').addEventListener('input', (e) => {
-      // Convert hex to rgba with alpha for transparent highlighter effect
-      const hex = e.target.value;
+      <div style="display: flex; align-items: center; justify-content: space-between; background: #f8fafc; padding: 8px 10px; border-radius: 6px; border: 1px solid #f1f5f9;">
+        <span style="font-size: 12px; font-weight: 500; color: #475569;">Active Color:</span>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="color" id="sticky-color-picker" value="#ffeb3b" style="border: none; width: 28px; height: 28px; cursor: pointer; background: none; border-radius: 50%;">
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Reader Actions -->
+    <div style="display: flex; gap: 6px; margin-bottom: 16px; border-bottom: 1px solid #f1f5f9; padding-bottom: 12px;">
+      <button id="sticky-move-btn" style="flex:1; padding: 6px; font-size: 11px; border: 1px solid #cbd5e1; background: #fff; border-radius: 6px; cursor: pointer;">📁 Move</button>
+      <button id="sticky-delete-btn" style="flex:1; padding: 6px; font-size: 11px; border: 1px solid #fca5a5; background: #fee2e2; color: #dc2626; border-radius: 6px; cursor: pointer;">🗑️ Delete</button>
+    </div>
+
+    <!-- Live Annotation Notes List -->
+    <div style="font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Page Notes</div>
+    <div id="annotation-list">
+      <div style="color: #94a3b8; font-size: 12px; font-style: italic;">No annotations on this page.</div>
+    </div>
+  `;
+
+  // Bind Switcher Buttons
+  const highlightBtn = document.getElementById('tool-btn-highlight');
+  const underlineBtn = document.getElementById('tool-btn-underline');
+  const colorPicker = document.getElementById('sticky-color-picker');
+
+  highlightBtn.addEventListener('click', () => {
+    activeMode = "highlight";
+    highlightBtn.style.background = "#fef08a";
+    underlineBtn.style.background = "#f1f5f9";
+    colorPicker.value = "#ffeb3b";
+  });
+
+  underlineBtn.addEventListener('click', () => {
+    activeMode = "underline";
+    underlineBtn.style.background = "#bae6fd";
+    highlightBtn.style.background = "#f1f5f9";
+    colorPicker.value = "#2196f3";
+  });
+
+  colorPicker.addEventListener('input', (e) => {
+    const hex = e.target.value;
+    if (activeMode === "highlight") {
       const r = parseInt(hex.slice(1, 3), 16);
       const g = parseInt(hex.slice(3, 5), 16);
       const b = parseInt(hex.slice(5, 7), 16);
       activeHighlightColor = `rgba(${r}, ${g}, ${b}, 0.45)`;
-    });
+    } else {
+      activeUnderlineColor = hex;
+    }
+  });
 
-    document.getElementById('underline-color-picker').addEventListener('input', (e) => {
-      activeUnderlineColor = e.target.value;
-    });
-  }
-
-  if (!document.getElementById('move-book-btn')) {
-    const moveBtn = document.createElement('button');
-    moveBtn.id = 'move-book-btn';
-    moveBtn.innerHTML = '📁 Move PDF';
-    moveBtn.addEventListener('click', moveCurrentPDF);
-    controlsDiv.appendChild(moveBtn);
-  }
-
-  if (!document.getElementById('delete-book-btn')) {
-    const deleteBtn = document.createElement('button');
-    deleteBtn.id = 'delete-book-btn';
-    deleteBtn.className = 'danger';
-    deleteBtn.innerHTML = '🗑️ Delete PDF';
-    deleteBtn.addEventListener('click', deleteCurrentPDF);
-    controlsDiv.appendChild(deleteBtn);
-  }
+  document.getElementById('sticky-move-btn').addEventListener('click', moveCurrentPDF);
+  document.getElementById('sticky-delete-btn').addEventListener('click', deleteCurrentPDF);
 }
 
 function setupFileExplorerUI() {
   let explorerContainer = document.getElementById('file-explorer');
-  
   if (!explorerContainer) {
     explorerContainer = document.createElement('div');
     explorerContainer.id = 'file-explorer';
-    explorerContainer.style.padding = '15px';
-    explorerContainer.style.background = '#f8f9fa';
-    explorerContainer.style.borderRadius = '8px';
-    explorerContainer.style.border = '1px solid #e9ecef';
+    explorerContainer.style.padding = '16px';
+    explorerContainer.style.background = '#f8fafc';
+    explorerContainer.style.borderRadius = '10px';
+    explorerContainer.style.border = '1px solid #e2e8f0';
     explorerContainer.style.marginBottom = '20px';
 
     const parent = document.querySelector('.reader-controls') || document.body;
@@ -118,21 +158,21 @@ async function loadFileExplorer(folderSubPath = "") {
   }
 
   let html = `
-    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
-      <div style="font-weight:600; font-size:14px; color:#495057;">
-        📂 Location: <span style="color:#0d6efd; cursor:pointer;" onclick="navigateToFolder('')">Home</span> 
+    <div style="display:flex; align-items:center; justify-space:between; margin-bottom:14px;">
+      <div style="font-weight:600; font-size:14px; color:#334155;">
+        📂 Directory: <span style="color:#2563eb; cursor:pointer;" onclick="navigateToFolder('')">Home</span> 
         ${folderSubPath ? ` / <span>${folderSubPath}</span>` : ''}
       </div>
-      <button id="explorer-new-folder-btn" style="padding:4px 10px; font-size:12px; cursor:pointer;">+ New Folder</button>
+      <button id="explorer-new-folder-btn" style="padding:6px 12px; font-size:12px; font-weight:600; background:#3b82f6; color:#fff; border:none; border-radius:6px; cursor:pointer;">+ New Folder</button>
     </div>
     <div id="explorer-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap:12px;">
   `;
 
   if (folderSubPath !== "") {
     html += `
-      <div class="explorer-card" onclick="navigateUpFolder()" style="border:1px solid #dee2e6; border-radius:6px; padding:10px; text-align:center; background:#fff; cursor:pointer;">
+      <div class="explorer-card" onclick="navigateUpFolder()" style="border:1px solid #cbd5e1; border-radius:8px; padding:12px; text-align:center; background:#fff; cursor:pointer;">
         <div style="font-size:28px;">⬆️</div>
-        <div style="font-size:12px; font-weight:bold; color:#6c757d; margin-top:4px;">.. Back</div>
+        <div style="font-size:11px; font-weight:bold; color:#64748b; margin-top:4px;">.. Back</div>
       </div>
     `;
   }
@@ -148,11 +188,11 @@ async function loadFileExplorer(folderSubPath = "") {
              data-path="${currentUserId}/${fullItemPath}" 
              data-subpath="${fullItemPath}"
              data-is-pdf="${isPDF}"
-             style="border:1px solid #dee2e6; border-radius:6px; padding:10px; text-align:center; background:#fff; cursor:pointer; transition:transform 0.1s;"
-             onmouseover="this.style.transform='scale(1.03)'" 
-             onmouseout="this.style.transform='scale(1)'">
+             style="border:1px solid #e2e8f0; border-radius:8px; padding:12px; text-align:center; background:#fff; cursor:pointer; transition:transform 0.1s, box-shadow 0.1s;"
+             onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 6px -1px rgba(0,0,0,0.1)';" 
+             onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none';">
           <div style="font-size:32px;">${icon}</div>
-          <div style="font-size:11px; word-break:break-word; margin-top:6px; color:#333; font-weight:500;">
+          <div style="font-size:11px; word-break:break-word; margin-top:6px; color:#1e293b; font-weight:500;">
             ${item.name}
           </div>
         </div>
@@ -163,7 +203,7 @@ async function loadFileExplorer(folderSubPath = "") {
   html += `</div>`;
   explorerContainer.innerHTML = html;
 
-  // Bind Explorer Card Clicks
+  // Bind Explorer Folder/File Click Events
   document.querySelectorAll('.explorer-card[data-is-pdf]').forEach(card => {
     card.addEventListener('click', () => {
       const isPDF = card.getAttribute('data-is-pdf') === 'true';
@@ -179,6 +219,7 @@ async function loadFileExplorer(folderSubPath = "") {
     });
   });
 
+  // Bind New Folder Prompt Action
   document.getElementById('explorer-new-folder-btn')?.addEventListener('click', async () => {
     const name = prompt("Enter new folder name:");
     if (name) {
@@ -366,7 +407,7 @@ async function deleteCurrentPDF() {
 function clearOverlayLayers() {
   document.getElementById('annotation-layer').innerHTML = '';
   document.getElementById('text-layer').innerHTML = '';
-  document.getElementById('annotation-list').innerHTML = '<div style="color:#888; font-style:italic;">No annotations on this page.</div>';
+  document.getElementById('annotation-list').innerHTML = '<div style="color:#94a3b8; font-size:12px; font-style:italic;">No annotations on this page.</div>';
 }
 
 async function renderPage(num) {
@@ -465,16 +506,13 @@ wrapper.addEventListener('mouseup', async (e) => {
 
   if (rect && rect.w > 0) {
     const userComment = prompt("Add a comment/note for this annotation (optional):") || "";
-    const type = document.getElementById('mode') ? document.getElementById('mode').value : "highlight";
-    
-    // Store custom chosen color into the record
-    const color = type === 'underline' ? activeUnderlineColor : activeHighlightColor;
+    const color = activeMode === 'underline' ? activeUnderlineColor : activeHighlightColor;
 
     const { error } = await supabaseClient.from('annotations').insert({
       book_id: currentBookId,
       user_id: currentUserId,
       page_number: pageNum,
-      annotation_type: type,
+      annotation_type: activeMode,
       rects: { ...rect, color: color },
       comment_text: userComment,
       created_at: new Date().toISOString()
@@ -508,42 +546,40 @@ async function loadAnnotations(num) {
   }
 
   if (!items || items.length === 0) {
-    list.innerHTML = '<div style="color:#888; font-style:italic;">No annotations on this page.</div>';
+    list.innerHTML = '<div style="color:#94a3b8; font-size:12px; font-style:italic;">No annotations on this page.</div>';
     return;
   }
 
   items.forEach(item => {
     drawAnnotationBox(item.rects, item.annotation_type, item.comment_text);
 
-    // Modernized Comment Card Layout
     const card = document.createElement('div');
     card.className = 'annotation-card';
     card.style.cssText = `
       background: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 10px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.04);
-      transition: box-shadow 0.2s ease;
+      padding: 10px;
+      margin-bottom: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     `;
 
-    const badgeColor = item.annotation_type === 'underline' ? '#2196f3' : '#eab308';
+    const badgeColor = item.annotation_type === 'underline' ? '#0284c7' : '#ca8a04';
     const badgeIcon = item.annotation_type === 'underline' ? '✏️ Underline' : '🖍️ Highlight';
 
     card.innerHTML = `
-      <div style="display:flex; align-items:center; justify-style:space-between; margin-bottom: 8px;">
-        <span style="background:${badgeColor}20; color:${badgeColor}; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 12px; border: 1px solid ${badgeColor}40;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px;">
+        <span style="background:${badgeColor}15; color:${badgeColor}; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 10px; border: 1px solid ${badgeColor}30;">
           ${badgeIcon}
         </span>
-        <span style="font-size: 11px; color: #94a3b8; margin-left: auto;">Page ${item.page_number}</span>
+        <span style="font-size: 10px; color: #94a3b8;">Page ${item.page_number}</span>
       </div>
-      <div style="font-size: 13px; color: #334155; margin-bottom: 10px; line-height: 1.4;">
-        ${item.comment_text ? item.comment_text : '<em style="color:#a1a1aa;">No note added</em>'}
+      <div style="font-size: 12px; color: #334155; margin-bottom: 8px; line-height: 1.3;">
+        ${item.comment_text ? item.comment_text : '<em style="color:#a1a1aa;">No comment</em>'}
       </div>
-      <div class="actions" style="display:flex; gap: 8px; justify-content: flex-end;">
-        <button class="edit-btn" data-id="${item.id}" data-text="${item.comment_text || ''}" style="background:#f1f5f9; border:1px solid #cbd5e1; color:#475569; padding:4px 8px; font-size:11px; border-radius:4px; cursor:pointer;">✏️ Edit</button>
-        <button class="danger delete-btn" data-id="${item.id}" style="background:#fee2e2; border:1px solid #fca5a5; color:#dc2626; padding:4px 8px; font-size:11px; border-radius:4px; cursor:pointer;">🗑️ Delete</button>
+      <div class="actions" style="display:flex; gap: 6px; justify-content: flex-end;">
+        <button class="edit-btn" data-id="${item.id}" data-text="${item.comment_text || ''}" style="background:#f1f5f9; border:1px solid #cbd5e1; color:#475569; padding:2px 6px; font-size:10px; border-radius:4px; cursor:pointer;">✏️ Edit</button>
+        <button class="danger delete-btn" data-id="${item.id}" style="background:#fee2e2; border:1px solid #fca5a5; color:#dc2626; padding:2px 6px; font-size:10px; border-radius:4px; cursor:pointer;">🗑️ Delete</button>
       </div>
     `;
     list.appendChild(card);
